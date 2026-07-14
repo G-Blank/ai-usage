@@ -1,0 +1,511 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ccusage · painel de consumo</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600&family=Inter:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+	:root{
+		--bg:#0e1116; --panel:#151a21; --panel-2:#1b212a; --line:#252d38;
+		--text:#e7ecf2; --muted:#8b96a5; --faint:#5b6673;
+		--amber:#f5b83d; --amber-dim:#8a6a24;
+		--font-ui:'Inter',system-ui,sans-serif; --font-num:'IBM Plex Mono',ui-monospace,monospace;
+	}
+	*{box-sizing:border-box;margin:0;padding:0}
+	body{background:var(--bg);color:var(--text);font-family:var(--font-ui);font-size:14px;line-height:1.5;padding:28px clamp(16px,4vw,48px) 64px}
+
+	header{display:flex;flex-wrap:wrap;align-items:baseline;gap:14px;margin-bottom:6px}
+	header h1{font-size:17px;font-weight:600;letter-spacing:.2px}
+	header h1 span{color:var(--amber)}
+	.pill{font-family:var(--font-num);font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:2px 10px}
+	#status{margin-left:auto;font-family:var(--font-num);font-size:11px;color:var(--faint)}
+	#status b{color:var(--muted);font-weight:500}
+
+	.controls{display:flex;flex-wrap:wrap;align-items:center;gap:10px;margin:18px 0 14px;padding:12px 14px;background:var(--panel);border:1px solid var(--line);border-radius:10px}
+	.controls label{font-size:12px;color:var(--muted)}
+	input[type=date]{background:var(--panel-2);border:1px solid var(--line);color:var(--text);border-radius:6px;padding:6px 9px;font-family:var(--font-num);font-size:12px;color-scheme:dark}
+	button{background:var(--panel-2);border:1px solid var(--line);color:var(--text);border-radius:6px;padding:6px 14px;font-family:var(--font-ui);font-size:12px;cursor:pointer}
+	button:hover{border-color:#3a4554}
+	button.primary{background:var(--amber);border-color:var(--amber);color:#181307;font-weight:600}
+	button.ghost{background:transparent}
+	.spacer{flex:1}
+	.auto{display:flex;align-items:center;gap:8px;font-size:12px;color:var(--muted)}
+	.auto b{font-family:var(--font-num);color:var(--text);font-weight:500;min-width:3ch;text-align:right}
+
+	#filterBar{display:none;align-items:center;gap:10px;margin:0 0 14px;padding:8px 14px;background:#1c1810;border:1px solid var(--amber-dim);border-radius:10px;font-size:12px}
+	#filterBar .tag{font-family:var(--font-num);color:var(--amber)}
+	#filterBar button{padding:3px 10px}
+
+	.cards{display:grid;grid-template-columns:repeat(auto-fit,minmax(158px,1fr));gap:10px;margin-bottom:26px}
+	.card{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:14px 16px}
+	.card .k{font-size:11px;letter-spacing:.6px;text-transform:uppercase;color:var(--faint);margin-bottom:8px}
+	.card .v{font-family:var(--font-num);font-size:21px;font-weight:500;font-variant-numeric:tabular-nums;white-space:nowrap}
+	.card .s{font-family:var(--font-num);font-size:11px;color:var(--muted);margin-top:4px}
+	.card.hero{grid-column:span 2;background:linear-gradient(180deg,#1c1810,#151a21 70%);border-color:var(--amber-dim)}
+	.card.hero .k{color:var(--amber)}
+	.card.hero .v{font-size:30px;color:var(--amber)}
+	@media (max-width:760px){.card.hero{grid-column:span 1}.card.hero .v{font-size:24px}}
+
+	section h2{font-size:13px;font-weight:600;letter-spacing:.4px;color:var(--muted);text-transform:uppercase;margin-bottom:10px}
+	.chart-wrap{background:var(--panel);border:1px solid var(--line);border-radius:10px;padding:16px}
+	.chart-head{display:flex;flex-wrap:wrap;align-items:center;gap:8px;margin-bottom:12px}
+	.metric-toggle{display:flex;border:1px solid var(--line);border-radius:6px;overflow:hidden}
+	.metric-toggle button{border:0;border-radius:0;padding:5px 12px;background:transparent;color:var(--muted)}
+	.metric-toggle button.on{background:var(--panel-2);color:var(--text)}
+	.hint{font-size:11px;color:var(--faint)}
+	.chips{display:flex;flex-wrap:wrap;gap:6px;margin-left:auto}
+	.chip{display:flex;align-items:center;gap:6px;font-family:var(--font-num);font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:3px 10px;cursor:pointer;user-select:none}
+	.chip .dot{width:9px;height:9px;border-radius:2px;flex:none}
+	.chip.dim{opacity:.32}
+	.chip.sel{border-color:var(--amber);color:var(--text)}
+	.chip.action{color:var(--text);background:var(--panel-2)}
+	#chartBox{position:relative;height:340px}
+
+	.table-wrap{margin-top:26px}
+	.table-head{display:flex;align-items:center;gap:10px;margin-bottom:10px}
+	.table-scroll{overflow-x:auto;background:var(--panel);border:1px solid var(--line);border-radius:10px;max-height:520px;overflow-y:auto}
+	table{width:100%;border-collapse:collapse;font-family:var(--font-num);font-size:12px;min-width:980px}
+	th,td{padding:8px 13px;text-align:right;white-space:nowrap;font-variant-numeric:tabular-nums}
+	th{font-family:var(--font-ui);font-size:11px;letter-spacing:.5px;text-transform:uppercase;color:var(--faint);border-bottom:1px solid var(--line);position:sticky;top:0;background:var(--panel);z-index:1}
+	th:nth-child(-n+3),td:nth-child(-n+3){text-align:left}
+	tbody tr{border-bottom:1px solid #1d2430}
+	tbody tr:hover{background:var(--panel-2)}
+	tbody tr.day-first td{border-top:1px solid var(--line)}
+	td.model{cursor:pointer}
+	td.model .dot{display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:7px;vertical-align:0}
+	tfoot td{border-top:1px solid var(--line);font-weight:600;color:var(--amber);position:sticky;bottom:0;background:var(--panel)}
+	td.brl{color:var(--amber)}
+
+	.err{display:none;margin:14px 0;padding:12px 16px;border:1px solid #7a3030;background:#241416;border-radius:10px;color:#f0b7b7;font-size:13px}
+	.loading{opacity:.45;transition:opacity .2s}
+</style>
+</head>
+<body>
+
+<header>
+	<h1>ccusage <span>· painel de consumo</span></h1>
+	<span class="pill" id="agentPill">agente: —</span>
+	<span class="pill" id="syncPill" style="display:none;cursor:pointer" title="clique para sincronizar agora">sync: —</span>
+	<span id="status">carregando…</span>
+</header>
+
+<div class="err" id="err"></div>
+
+<div class="controls">
+	<label>De <input type="date" id="since"></label>
+	<label>Até <input type="date" id="until"></label>
+	<button class="primary" id="apply">Aplicar</button>
+	<button class="ghost" id="thisMonth">Mês atual</button>
+	<span class="spacer"></span>
+	<div class="auto">
+		<label><input type="checkbox" id="autoChk" checked> Atualização automática</label>
+		<span>próxima em <b id="countdown">—</b>s</span>
+		<button id="refreshNow">Atualizar agora</button>
+	</div>
+</div>
+
+<div id="filterBar">
+	<span>Filtro ativo:</span><span class="tag" id="filterTag"></span>
+	<button id="clearFilter">Limpar filtro</button>
+</div>
+
+<div id="tagRow" style="display:none;flex-wrap:wrap;align-items:center;gap:8px;margin:0 0 14px;font-size:12px;color:var(--muted)">
+	<span>Tag / projeto:</span>
+	<div class="chips" id="tagChips" style="margin-left:0"></div>
+</div>
+
+<div class="cards" id="cards">
+	<div class="card"><div class="k">Entrada</div><div class="v" id="cInput">—</div></div>
+	<div class="card"><div class="k">Saída</div><div class="v" id="cOutput">—</div></div>
+	<div class="card"><div class="k">Cache write</div><div class="v" id="cCacheW">—</div></div>
+	<div class="card"><div class="k">Cache read</div><div class="v" id="cCacheR">—</div></div>
+	<div class="card"><div class="k">Total de tokens</div><div class="v" id="cTotal">—</div></div>
+	<div class="card hero"><div class="k">Custo no período</div><div class="v" id="cBrl">—</div><div class="s" id="cBrlSub">—</div></div>
+</div>
+
+<section>
+	<h2>Consumo por dia · por modelo</h2>
+	<div class="chart-wrap">
+		<div class="chart-head">
+			<div class="metric-toggle">
+				<button id="mTokens" class="on">Tokens</button>
+				<button id="mCost">Custo (US$)</button>
+			</div>
+			<span class="hint">clique num modelo (barra ou chip) para filtrar tudo · Ctrl/Shift+clique adiciona ou remove da seleção</span>
+			<div class="chips" id="chips"></div>
+		</div>
+		<div id="chartBox"><canvas id="chart" role="img" aria-label="Gráfico de colunas empilhadas: consumo diário dividido por modelo; clicar num segmento filtra o painel"></canvas></div>
+	</div>
+</section>
+
+<section class="table-wrap">
+	<div class="table-head">
+		<h2 style="margin:0">Detalhe diário por modelo</h2>
+		<span class="spacer"></span>
+		<button id="exportCsv">Exportar CSV</button>
+	</div>
+	<div class="table-scroll">
+		<table id="tbl">
+			<thead><tr>
+				<th>Data</th><th>Modelo</th><th>Tag</th><th>Entrada</th><th>Saída</th><th>Cache write</th><th>Cache read</th><th>Total tokens</th><th>Custo (US$)</th><th>Custo (R$)</th>
+			</tr></thead>
+			<tbody></tbody>
+			<tfoot></tfoot>
+		</table>
+	</div>
+</section>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
+<script>
+'use strict';
+
+// ---------- estado ----------
+const S = {
+	daily: [],            // [{date, models:[{name,input,output,cacheW,cacheR,tokens,cost}]}]
+	models: [],           // nomes ordenados
+	sel: null,            // filtro cruzado; null = todos, Set vazio = nenhum
+	tag: null,            // filtro por tag; null = todas, '' = sem tag
+	modelTag: {},         // nome do modelo -> tag ('' quando sem tag)
+	metric: 'tokens',
+	rate: null, rateSource: null,
+	refreshSeconds: 60, countdown: 60, chart: null
+};
+
+const PALETTE = ['#4f8ef7','#3ecf8e','#f5b83d','#e0653a','#a78bfa','#ef6aa2','#38bdc8','#9dbf3b','#c98b5e','#7a86f0','#d1d16a','#e57373','#6ac4a5','#b57edc','#8fa3b8'];
+const $ = (id) => document.getElementById(id);
+
+// ---------- formatação ----------
+const nf = new Intl.NumberFormat('pt-BR');
+const nfUsd = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'USD' });
+const nfBrl = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+function compact(n){
+	if (n >= 1e9) return (n/1e9).toLocaleString('pt-BR',{maximumFractionDigits:2}) + ' B';
+	if (n >= 1e6) return (n/1e6).toLocaleString('pt-BR',{maximumFractionDigits:2}) + ' M';
+	if (n >= 1e3) return (n/1e3).toLocaleString('pt-BR',{maximumFractionDigits:1}) + ' k';
+	return nf.format(n);
+}
+const brDate = (iso) => iso.split('-').reverse().join('/');
+const shortModel = (m) => { const t = S.modelTag[m]; return (t ? m.slice(t.length + 1) : m).replace(/^claude-/, ''); };
+
+// ---------- datas ----------
+function setThisMonth(){
+	const now = new Date();
+	const iso = (d) => d.toISOString().slice(0,10);
+	$('since').value = iso(new Date(now.getFullYear(), now.getMonth(), 1));
+	$('until').value = iso(new Date(now.getFullYear(), now.getMonth()+1, 0));
+}
+
+// ---------- filtro cruzado (estilo Power BI) ----------
+// S.sel === null  -> todos os modelos visiveis
+// S.sel = Set     -> apenas os do conjunto (pode ser vazio = nenhum)
+function visibleModels(){ return S.models.filter(m => S.tag === null || (S.modelTag[m] || '') === S.tag); }
+function activeModels(){ const v = visibleModels(); return S.sel === null ? v : v.filter(m => S.sel.has(m)); }
+function isActive(m){ return S.sel === null || S.sel.has(m); }
+function normalizeSel(){ const v = visibleModels(); if (S.sel !== null && v.length && v.every(m => S.sel.has(m))) S.sel = null; }
+function applySelection(model, additive){
+	if (additive){
+		// Ctrl/Shift+clique: alterna o modelo na selecao atual.
+		// Partindo de "todos", vira "todos menos este".
+		if (S.sel === null) S.sel = new Set(visibleModels());
+		S.sel.has(model) ? S.sel.delete(model) : S.sel.add(model);
+		normalizeSel();
+	} else {
+		// clique simples: isola o modelo; clicar de novo no unico selecionado volta a todos
+		if (S.sel !== null && S.sel.size === 1 && S.sel.has(model)) S.sel = null;
+		else S.sel = new Set([model]);
+	}
+	renderFiltered();
+}
+function selectAll(){ S.sel = null; renderFiltered(); }
+function selectNone(){ S.sel = new Set(); renderFiltered(); }
+function setTag(t){ S.tag = t; S.sel = null; renderFiltered(); }
+function tagLabel(t){ return t === '' ? 'sem tag' : t; }
+
+// ---------- carga ----------
+async function loadRate(){
+	try{
+		const r = await (await fetch('/api/rate')).json();
+		if (r.ok && r.rate){ S.rate = r.rate; S.rateSource = r.source; }
+	}catch(e){ /* mantem ultimo valor */ }
+}
+
+async function loadUsage(){
+	document.body.classList.add('loading');
+	$('err').style.display = 'none';
+	try{
+		const since = $('since').value.replace(/-/g,'');
+		const until = $('until').value.replace(/-/g,'');
+		const r = await (await fetch(`/api/usage?since=${since}&until=${until}`)).json();
+		if (!r.ok) throw new Error(r.error || 'erro desconhecido');
+
+		S.refreshSeconds = r.refreshSeconds || 60;
+		$('agentPill').textContent = 'agente: ' + (r.agent || 'all');
+
+		S.daily = (r.data && r.data.daily || []).map(d => ({
+			date: d.period || d.date,
+			models: (d.modelBreakdowns||[]).map(m => {
+				const inp = m.inputTokens||0, out = m.outputTokens||0, cw = m.cacheCreationTokens||0, cr = m.cacheReadTokens||0;
+				return { name: m.modelName, tag: m.tag || '', input: inp, output: out, cacheW: cw, cacheR: cr,
+					tokens: (m.totalTokens != null) ? m.totalTokens : inp+out+cw+cr, cost: m.cost||0 };
+			})
+		})).sort((a,b)=> a.date < b.date ? -1 : 1);
+
+		const set = new Set();
+		S.modelTag = {};
+		S.daily.forEach(d => d.models.forEach(m => { set.add(m.name); S.modelTag[m.name] = m.tag; }));
+		S.models = [...set].sort();
+		const tags = [...new Set(Object.values(S.modelTag))];
+		if (S.tag !== null && !tags.includes(S.tag)) S.tag = null;
+		// remove da selecao modelos que sairam do recorte (null = todos, mantem)
+		if (S.sel !== null) S.sel = new Set([...S.sel].filter(m => set.has(m)));
+		normalizeSel();
+
+		renderFiltered();
+		$('status').innerHTML = 'atualizado às <b>' + new Date().toLocaleTimeString('pt-BR') + '</b>';
+	}catch(e){
+		$('err').textContent = 'Falha ao consultar o ccusage: ' + e.message;
+		$('err').style.display = 'block';
+	}finally{
+		document.body.classList.remove('loading');
+	}
+}
+
+// ---------- render ----------
+function renderFiltered(){ renderFilterBar(); renderTags(); renderCards(); renderChips(); renderChart(); renderTable(); }
+
+function renderTags(){
+	const tags = [...new Set(Object.values(S.modelTag))].filter(t => t !== '').sort();
+	const hasUntagged = Object.values(S.modelTag).some(t => t === '');
+	const row = $('tagRow');
+	if (!tags.length){ row.style.display = 'none'; return; }
+	row.style.display = 'flex';
+	const box = $('tagChips'); box.innerHTML = '';
+	const mk = (label, value) => {
+		const c = document.createElement('span');
+		c.className = 'chip' + (S.tag === value ? ' sel' : '') + (S.tag !== null && S.tag !== value ? ' dim' : '');
+		c.textContent = label;
+		c.onclick = () => setTag(S.tag === value ? null : value);
+		box.appendChild(c);
+	};
+	const all = document.createElement('span');
+	all.className = 'chip action' + (S.tag === null ? ' sel' : '');
+	all.textContent = 'todas';
+	all.onclick = () => setTag(null);
+	box.appendChild(all);
+	tags.forEach(t => mk(t, t));
+	if (hasUntagged) mk('sem tag', '');
+}
+
+function totalsOf(models){
+	const on = new Set(models);
+	const t = {input:0,output:0,cacheW:0,cacheR:0,tokens:0,cost:0};
+	S.daily.forEach(d => d.models.forEach(m => {
+		if (!on.has(m.name)) return;
+		t.input+=m.input; t.output+=m.output; t.cacheW+=m.cacheW; t.cacheR+=m.cacheR; t.tokens+=m.tokens; t.cost+=m.cost;
+	}));
+	return t;
+}
+
+function renderFilterBar(){
+	const bar = $('filterBar');
+	if (S.sel === null && S.tag === null){ bar.style.display = 'none'; return; }
+	bar.style.display = 'flex';
+	const parts = [];
+	if (S.tag !== null) parts.push('tag: ' + tagLabel(S.tag));
+	if (S.sel !== null) parts.push(S.sel.size ? [...S.sel].map(shortModel).join(' · ') : 'nenhum modelo');
+	$('filterTag').textContent = parts.join('  |  ');
+}
+
+function renderCards(){
+	const t = totalsOf(activeModels());
+	$('cInput').textContent  = compact(t.input);
+	$('cOutput').textContent = compact(t.output);
+	$('cCacheW').textContent = compact(t.cacheW);
+	$('cCacheR').textContent = compact(t.cacheR);
+	$('cTotal').textContent  = compact(t.tokens);
+	if (S.rate){
+		$('cBrl').textContent = nfBrl.format(t.cost * S.rate);
+		$('cBrlSub').textContent = nfUsd.format(t.cost) + '  ·  US$ 1 = ' + nfBrl.format(S.rate) + '  ·  ' + (S.rateSource||'');
+	} else {
+		$('cBrl').textContent = nfUsd.format(t.cost);
+		$('cBrlSub').textContent = 'cotação USD→BRL indisponível no momento';
+	}
+}
+
+function colorOf(model){ return PALETTE[S.models.indexOf(model) % PALETTE.length]; }
+
+function renderChips(){
+	const box = $('chips'); box.innerHTML = '';
+	const mk = (label, fn, title) => {
+		const a = document.createElement('span');
+		a.className = 'chip action'; a.textContent = label; a.title = title || '';
+		a.onclick = fn; box.appendChild(a);
+	};
+	mk('todos', selectAll, 'mostrar todos os modelos');
+	mk('nenhum', selectNone, 'ocultar todos os modelos');
+	visibleModels().forEach(m => {
+		const c = document.createElement('span');
+		const active = isActive(m);
+		c.className = 'chip' + (active ? '' : ' dim') + (S.sel !== null && S.sel.has(m) ? ' sel' : '');
+		c.innerHTML = `<span class="dot" style="background:${colorOf(m)}"></span>${shortModel(m)}`;
+		c.title = m + ' — clique: filtrar só este · Ctrl/Shift+clique: adicionar ou remover da seleção';
+		c.onclick = (ev) => applySelection(m, ev.ctrlKey || ev.metaKey || ev.shiftKey);
+		box.appendChild(c);
+	});
+}
+
+function renderChart(){
+	const models = activeModels();
+	const labels = S.daily.map(d => brDate(d.date).slice(0,5));
+	const datasets = models.map(m => ({
+		label: m,
+		data: S.daily.map(d => {
+			const e = d.models.find(x => x.name === m);
+			return e ? (S.metric === 'tokens' ? e.tokens : +e.cost.toFixed(4)) : 0;
+		}),
+		backgroundColor: colorOf(m),
+		borderRadius: 3, maxBarThickness: 34
+	}));
+
+	if (S.chart) S.chart.destroy();
+	S.chart = new Chart($('chart'), {
+		type: 'bar',
+		data: { labels, datasets },
+		options: {
+			responsive: true, maintainAspectRatio: false, animation: { duration: 200 },
+			onClick: (ev, els, chart) => {
+				const hits = chart.getElementsAtEventForMode(ev, 'nearest', { intersect: true }, true);
+				if (!hits.length) return;
+				const model = chart.data.datasets[hits[0].datasetIndex].label;
+				applySelection(model, ev.native && (ev.native.ctrlKey || ev.native.metaKey || ev.native.shiftKey));
+			},
+			onHover: (ev, els, chart) => { chart.canvas.style.cursor = els.length ? 'pointer' : 'default'; },
+			scales: {
+				x: { stacked: true, grid: { display: false }, ticks: { color: '#8b96a5', autoSkip: true, maxRotation: 0 } },
+				y: { stacked: true, grid: { color: '#232b36' }, ticks: { color: '#8b96a5',
+					callback: v => S.metric === 'tokens' ? compact(v) : '$' + v } }
+			},
+			plugins: {
+				legend: { display: false },
+				tooltip: {
+					callbacks: {
+						label: (ctx) => ' ' + shortModel(ctx.dataset.label) + ': ' +
+							(S.metric === 'tokens' ? nf.format(ctx.raw) + ' tokens' : nfUsd.format(ctx.raw))
+					}
+				}
+			}
+		}
+	});
+}
+
+// linhas dia x modelo (respeitando o filtro)
+function tableRows(){
+	const on = new Set(activeModels());
+	const rows = [];
+	S.daily.forEach(d => {
+		const ms = d.models.filter(m => on.has(m.name)).sort((a,b)=> b.cost - a.cost);
+		ms.forEach((m, i) => rows.push({ date: d.date, first: i === 0, ...m }));
+	});
+	return rows;
+}
+
+function renderTable(){
+	const tb = $('tbl').querySelector('tbody');
+	const tf = $('tbl').querySelector('tfoot');
+	tb.innerHTML = ''; tf.innerHTML = '';
+	tableRows().forEach(r => {
+		const tr = document.createElement('tr');
+		if (r.first) tr.className = 'day-first';
+		tr.innerHTML = `<td>${r.first ? brDate(r.date) : ''}</td>
+			<td class="model" data-m="${r.name}" title="clique para filtrar por este modelo"><span class="dot" style="background:${colorOf(r.name)}"></span>${shortModel(r.name)}</td>
+			<td>${S.modelTag[r.name] || '—'}</td>
+			<td>${nf.format(r.input)}</td><td>${nf.format(r.output)}</td>
+			<td>${nf.format(r.cacheW)}</td><td>${nf.format(r.cacheR)}</td><td>${nf.format(r.tokens)}</td>
+			<td>${nfUsd.format(r.cost)}</td><td class="brl">${S.rate ? nfBrl.format(r.cost*S.rate) : '—'}</td>`;
+		tb.appendChild(tr);
+	});
+	tb.querySelectorAll('td.model').forEach(td => {
+		td.onclick = (ev) => applySelection(td.dataset.m, ev.ctrlKey || ev.metaKey || ev.shiftKey);
+	});
+	const t = totalsOf(activeModels());
+	tf.innerHTML = `<tr><td>Total</td><td>${S.sel === null ? 'todos' : S.sel.size + ' modelo(s)'}</td><td>${S.tag === null ? 'todas' : tagLabel(S.tag)}</td>
+		<td>${nf.format(t.input)}</td><td>${nf.format(t.output)}</td>
+		<td>${nf.format(t.cacheW)}</td><td>${nf.format(t.cacheR)}</td><td>${nf.format(t.tokens)}</td>
+		<td>${nfUsd.format(t.cost)}</td><td class="brl">${S.rate ? nfBrl.format(t.cost*S.rate) : '—'}</td></tr>`;
+}
+
+// ---------- CSV ----------
+function exportCsv(){
+	const fmt = (n, dec) => n.toLocaleString('pt-BR', { minimumFractionDigits: dec||0, maximumFractionDigits: dec||0, useGrouping: false });
+	const rows = [['Data','Modelo','Tag','Entrada','Saida','Cache write','Cache read','Total tokens','Custo USD','Custo BRL']];
+	tableRows().forEach(r => rows.push([
+		brDate(r.date), r.name, S.modelTag[r.name] || '', r.input, r.output, r.cacheW, r.cacheR, r.tokens,
+		fmt(r.cost, 6), S.rate ? fmt(r.cost*S.rate, 4) : ''
+	]));
+	const t = totalsOf(activeModels());
+	rows.push(['Total','','', t.input, t.output, t.cacheW, t.cacheR, t.tokens, fmt(t.cost,4), S.rate ? fmt(t.cost*S.rate,2) : '']);
+	const csv = '\uFEFF' + rows.map(r => r.join(';')).join('\r\n');
+	const a = document.createElement('a');
+	a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
+	a.download = `ccusage_${$('since').value}_a_${$('until').value}${(S.sel !== null || S.tag !== null) ? '_filtrado' : ''}.csv`;
+	a.click();
+	URL.revokeObjectURL(a.href);
+}
+
+// ---------- sync (indicador opcional) ----------
+async function loadSyncStatus(){
+	try{
+		const r = await (await fetch('/api/sync/status')).json();
+		const st = r.status || {};
+		const pill = $('syncPill');
+		if (!st.enabled){ pill.style.display = 'none'; return; }
+		pill.style.display = '';
+		if (!st.lastRun){ pill.textContent = 'sync: aguardando'; return; }
+		const hh = new Date(st.lastRun).toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
+		const fail = (st.results||[]).some(x => !x.ok);
+		pill.textContent = 'sync: ' + (fail ? 'erro ' : 'ok ') + hh;
+		pill.style.borderColor = fail ? '#7a3030' : 'var(--line)';
+		pill.title = (st.results||[]).map(x => x.type + ': ' + x.detail).join('\n') || 'clique para sincronizar agora';
+	}catch(e){ /* silencioso */ }
+}
+$('syncPill') && ($('syncPill').onclick = async () => {
+	$('syncPill').textContent = 'sync: enviando…';
+	try{ await fetch('/api/sync/run', { method: 'POST' }); }catch(e){}
+	loadSyncStatus();
+});
+
+// ---------- auto refresh ----------
+function tick(){
+	if (!$('autoChk').checked) return;
+	S.countdown--;
+	$('countdown').textContent = Math.max(0, S.countdown);
+	if (S.countdown <= 0){ S.countdown = S.refreshSeconds; refresh(); }
+}
+async function refresh(){
+	await loadRate();
+	await loadUsage();
+	loadSyncStatus();
+	S.countdown = S.refreshSeconds;
+	$('countdown').textContent = S.countdown;
+}
+
+// ---------- eventos ----------
+$('apply').onclick = refresh;
+$('thisMonth').onclick = () => { setThisMonth(); refresh(); };
+$('refreshNow').onclick = refresh;
+$('exportCsv').onclick = exportCsv;
+$('clearFilter').onclick = () => { S.tag = null; selectAll(); };
+$('mTokens').onclick = () => { S.metric='tokens'; $('mTokens').classList.add('on'); $('mCost').classList.remove('on'); renderChart(); };
+$('mCost').onclick   = () => { S.metric='cost';   $('mCost').classList.add('on');   $('mTokens').classList.remove('on'); renderChart(); };
+document.addEventListener('keydown', (e) => { if (e.key === 'Escape'){ S.tag = null; selectAll(); } });
+
+// ---------- boot ----------
+setThisMonth();
+refresh();
+setInterval(tick, 1000);
+</script>
+</body>
+</html>

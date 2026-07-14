@@ -1,0 +1,7 @@
+{
+	"port": 8384,
+	"refreshSeconds": 60,
+	"agent": "all",
+	"offline": false,
+	"autoPricing": true
+}

@@ -1,0 +1,26 @@
+# Dependências e build
+node_modules/
+dist/
+
+# Segredos e overrides por máquina (nunca versionar)
+config.local.json
+.env
+.env.*
+
+# Estado gerado em runtime
+sync-state.json
+usage-history.json
+litellm-prices.json
+server.pid
+*.pid
+*.log
+
+# Lixo de SO / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# Configuração local do Claude Code
+.claude/settings.local.json

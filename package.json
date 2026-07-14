@@ -1,0 +1,46 @@
+{
+	"name": "ccusage-dashboard",
+	"version": "1.0.0",
+	"description": "Painel local de consumo de tokens/custo (Claude Code e outros agentes) via ccusage",
+	"main": "main.js",
+	"scripts": {
+		"start": "node server.js",
+		"app": "electron .",
+		"dist": "electron-builder --win"
+	},
+	"dependencies": {
+		"ccusage": "latest"
+	},
+	"devDependencies": {
+		"electron": "^31.0.0",
+		"electron-builder": "^24.13.0"
+	},
+	"build": {
+		"appId": "br.dev.ccusage.dashboard",
+		"productName": "ccusage Dashboard",
+		"directories": { "output": "dist" },
+		"files": [
+			"main.js",
+			"server.js",
+			"public/**",
+			"config.json",
+			"ccusage.json",
+			"node_modules/**"
+		],
+		"asarUnpack": [
+			"node_modules/ccusage/**"
+		],
+		"win": {
+			"signAndEditExecutable": false,
+			"target": [
+				{ "target": "nsis", "arch": ["x64"] },
+				{ "target": "portable", "arch": ["x64"] }
+			]
+		},
+		"nsis": {
+			"oneClick": true,
+			"perMachine": false,
+			"deleteAppDataOnUninstall": false
+		}
+	}
+}
