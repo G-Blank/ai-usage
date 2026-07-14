@@ -10,7 +10,7 @@ Quem usa agentes de código no dia a dia não tem resposta fácil para perguntas
 - **Os logs são efêmeros.** O Claude Code (e outros) tem janela de retenção: dias antigos somem dos logs e o histórico de custo se perde. O painel mantém um **histórico local persistente** que sobrevive à retenção — o que entrou, nunca mais some.
 - **Times não têm visão consolidada.** Cada dev consome na própria máquina; o gestor não enxerga o total. O modo headless + sync sobe o consumo de cada máquina (com identificação de usuário/máquina) para um data lake ou banco, de forma incremental, pronto para um dashboard corporativo.
 - **Ambiente corporativo é hostil.** Notebook com proxy que quebra o npm, executáveis bloqueados, sem admin. Por isso o servidor tem **zero dependências** (só Node nativo), degrada graciosamente sem rede e roda de qualquer pasta — inclusive OneDrive com espaços e acentos no caminho.
-- **Modelos atrás de proxy/gateway não têm preço.** Nomes com prefixo corporativo (ex.: `tax-claude-sonnet-5`) ficam com custo zerado nas ferramentas padrão. Aqui viram **tags de projeto** filtráveis e o preço é resolvido automaticamente pela tabela pública do LiteLLM.
+- **Modelos atrás de proxy/gateway não têm preço.** Nomes com prefixo corporativo (ex.: `acme-claude-sonnet-5`) ficam com custo zerado nas ferramentas padrão. Aqui viram **tags de projeto** filtráveis e o preço é resolvido automaticamente pela tabela pública do LiteLLM.
 
 Em resumo: **observabilidade de custo de IA plug-and-play** — 2 cliques para rodar na máquina de qualquer dev, e escala para telemetria de time quando necessário.
 
@@ -38,11 +38,11 @@ O navegador abre sozinho em http://localhost:8384. Se rodar o start de novo com 
 
 ### Tags de projeto (automático)
 
-Prefixos nos nomes dos modelos (ex.: `tax-claude-sonnet-4-6`) são detectados sozinhos e viram **tags** — no painel aparece a linha "Tag / projeto" com chips para filtrar tudo (cards, gráfico e tabela) por tag. A tabela e o CSV ganham a coluna Tag.
+Prefixos nos nomes dos modelos (ex.: `acme-claude-sonnet-4-6`) são detectados sozinhos e viram **tags** — no painel aparece a linha "Tag / projeto" com chips para filtrar tudo (cards, gráfico e tabela) por tag. A tabela e o CSV ganham a coluna Tag.
 
 ### Preço automático para modelos com prefixo
 
-Quando um modelo dos logs não tem preço conhecido (o caso dos `tax-*`), o painel resolve sozinho: extrai o modelo base (removendo prefixo e sufixos de instância como `-2`), busca o preço na tabela pública do LiteLLM (mesma fonte do ccusage, com cache local de 7 dias) e **grava o override automaticamente** no `ccusage.json` — sem sobrescrever nada que você tenha definido manualmente. Para desligar: `"autoPricing": false` no `config.json`. Modelos que o LiteLLM não conhece (ex.: apelidos totalmente customizados) continuam precisando de override manual.
+Quando um modelo dos logs não tem preço conhecido (o caso dos modelos com prefixo, ex.: `acme-*`), o painel resolve sozinho: extrai o modelo base (removendo prefixo e sufixos de instância como `-2`), busca o preço na tabela pública do LiteLLM (mesma fonte do ccusage, com cache local de 7 dias) e **grava o override automaticamente** no `ccusage.json` — sem sobrescrever nada que você tenha definido manualmente. Para desligar: `"autoPricing": false` no `config.json`. Modelos que o LiteLLM não conhece (ex.: apelidos totalmente customizados) continuam precisando de override manual.
 
 ## Configuração
 
@@ -62,7 +62,7 @@ Use `"agent": "claude"` para ver **apenas** o Claude Code (sem misturar OpenCode
 
 ### `ccusage.json` — mapeamento de preços (pricing overrides)
 
-Modelos desconhecidos pelo ccusage (ex.: prefixo de proxy `tax-...`) ficam com custo zerado. Cada chave aqui é o **nome exato** do modelo nos logs, com o preço por token (preço por milhão ÷ 1.000.000):
+Modelos desconhecidos pelo ccusage (ex.: prefixo de proxy `acme-...`) ficam com custo zerado. Cada chave aqui é o **nome exato** do modelo nos logs, com o preço por token (preço por milhão ÷ 1.000.000):
 
 ```json
 {
@@ -88,7 +88,7 @@ npx ccusage@latest daily --json --breakdown | ConvertFrom-Json |
   Select-Object -ExpandProperty modelName | Sort-Object -Unique
 ```
 
-Já vem preenchido com os modelos `tax-*` mapeados. Atenção: `tax-claude-sonnet-5` usa o preço introdutório (US$ 2/US$ 10 por M) válido até 31/08/2026 — depois, atualize para US$ 3/US$ 15.
+O arquivo já vem com um exemplo genérico (`acme-*`) — troque pelas chaves reais dos seus logs. Com o `autoPricing` ativado (padrão), a maioria dos modelos com prefixo é mapeada sozinha e você raramente precisa editar isto na mão.
 
 ## App desktop (Electron) — um único .exe
 

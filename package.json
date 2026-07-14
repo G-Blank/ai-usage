@@ -1,7 +1,13 @@
 {
-	"name": "ccusage-dashboard",
+	"name": "ai-usage",
 	"version": "1.0.0",
 	"description": "Painel local de consumo de tokens/custo (Claude Code e outros agentes) via ccusage",
+	"license": "MIT",
+	"author": "Guilherme Blank",
+	"repository": {
+		"type": "git",
+		"url": "https://github.com/G-Blank/ai-usage.git"
+	},
 	"main": "main.js",
 	"scripts": {
 		"start": "node server.js",
@@ -22,6 +28,7 @@
 		"files": [
 			"main.js",
 			"server.js",
+			"sync.js",
 			"public/**",
 			"config.json",
 			"ccusage.json",

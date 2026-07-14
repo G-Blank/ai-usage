@@ -189,11 +189,14 @@ function compact(n){
 }
 const brDate = (iso) => iso.split('-').reverse().join('/');
 const shortModel = (m) => { const t = S.modelTag[m]; return (t ? m.slice(t.length + 1) : m).replace(/^claude-/, ''); };
+// nomes de modelo vem dos logs locais; escapar evita quebrar o HTML se vierem com < > " &
+const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 // ---------- datas ----------
 function setThisMonth(){
 	const now = new Date();
-	const iso = (d) => d.toISOString().slice(0,10);
+	// formata no fuso local: toISOString (UTC) viraria o dia errado em fusos positivos
+	const iso = (d) => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
 	$('since').value = iso(new Date(now.getFullYear(), now.getMonth(), 1));
 	$('until').value = iso(new Date(now.getFullYear(), now.getMonth()+1, 0));
 }
@@ -350,7 +353,7 @@ function renderChips(){
 		const c = document.createElement('span');
 		const active = isActive(m);
 		c.className = 'chip' + (active ? '' : ' dim') + (S.sel !== null && S.sel.has(m) ? ' sel' : '');
-		c.innerHTML = `<span class="dot" style="background:${colorOf(m)}"></span>${shortModel(m)}`;
+		c.innerHTML = `<span class="dot" style="background:${colorOf(m)}"></span>${esc(shortModel(m))}`;
 		c.title = m + ' — clique: filtrar só este · Ctrl/Shift+clique: adicionar ou remover da seleção';
 		c.onclick = (ev) => applySelection(m, ev.ctrlKey || ev.metaKey || ev.shiftKey);
 		box.appendChild(c);
@@ -420,8 +423,8 @@ function renderTable(){
 		const tr = document.createElement('tr');
 		if (r.first) tr.className = 'day-first';
 		tr.innerHTML = `<td>${r.first ? brDate(r.date) : ''}</td>
-			<td class="model" data-m="${r.name}" title="clique para filtrar por este modelo"><span class="dot" style="background:${colorOf(r.name)}"></span>${shortModel(r.name)}</td>
-			<td>${S.modelTag[r.name] || '—'}</td>
+			<td class="model" data-m="${esc(r.name)}" title="clique para filtrar por este modelo"><span class="dot" style="background:${colorOf(r.name)}"></span>${esc(shortModel(r.name))}</td>
+			<td>${esc(S.modelTag[r.name] || '—')}</td>
 			<td>${nf.format(r.input)}</td><td>${nf.format(r.output)}</td>
 			<td>${nf.format(r.cacheW)}</td><td>${nf.format(r.cacheR)}</td><td>${nf.format(r.tokens)}</td>
 			<td>${nfUsd.format(r.cost)}</td><td class="brl">${S.rate ? nfBrl.format(r.cost*S.rate) : '—'}</td>`;
@@ -431,7 +434,7 @@ function renderTable(){
 		td.onclick = (ev) => applySelection(td.dataset.m, ev.ctrlKey || ev.metaKey || ev.shiftKey);
 	});
 	const t = totalsOf(activeModels());
-	tf.innerHTML = `<tr><td>Total</td><td>${S.sel === null ? 'todos' : S.sel.size + ' modelo(s)'}</td><td>${S.tag === null ? 'todas' : tagLabel(S.tag)}</td>
+	tf.innerHTML = `<tr><td>Total</td><td>${S.sel === null ? 'todos' : S.sel.size + ' modelo(s)'}</td><td>${S.tag === null ? 'todas' : esc(tagLabel(S.tag))}</td>
 		<td>${nf.format(t.input)}</td><td>${nf.format(t.output)}</td>
 		<td>${nf.format(t.cacheW)}</td><td>${nf.format(t.cacheR)}</td><td>${nf.format(t.tokens)}</td>
 		<td>${nfUsd.format(t.cost)}</td><td class="brl">${S.rate ? nfBrl.format(t.cost*S.rate) : '—'}</td></tr>`;

@@ -2,52 +2,15 @@
 	"$schema": "https://ccusage.com/config-schema.json",
 	"defaults": {
 		"pricingOverrides": {
-			"tax-Kimi-K2.7-Code": {
-				"inputCostPerToken": 0.00000095,
-				"outputCostPerToken": 0.000004,
-				"cacheReadInputTokenCost": 0.00000019
-			},
-			"tax-claude-opus-4-6-2": {
-				"inputCostPerToken": 0.000005,
-				"outputCostPerToken": 0.000025,
-				"cacheCreationInputTokenCost": 0.00000625,
-				"cacheReadInputTokenCost": 0.0000005
-			},
-			"tax-claude-sonnet-4-6-2": {
+			"acme-claude-sonnet-4-6": {
 				"inputCostPerToken": 0.000003,
 				"outputCostPerToken": 0.000015,
 				"cacheCreationInputTokenCost": 0.00000375,
 				"cacheReadInputTokenCost": 0.0000003
 			},
-			"tax-gpt-5.5-2": {
+			"acme-gpt-5.5": {
 				"inputCostPerToken": 0.000005,
 				"outputCostPerToken": 0.00003
-			},
-			"tax-DeepSeek-V4-Flash": {
-				"inputCostPerToken": 0.00000014,
-				"outputCostPerToken": 0.00000028,
-				"cacheReadInputTokenCost": 0.0000000028
-			},
-			"tax-DeepSeek-V4-Pro": {
-				"inputCostPerToken": 0.000000435,
-				"outputCostPerToken": 0.00000087,
-				"cacheReadInputTokenCost": 0.0000000036
-			},
-			"tax-claude-sonnet-5": {
-				"inputCostPerToken": 0.000002,
-				"outputCostPerToken": 0.00001,
-				"cacheCreationInputTokenCost": 0.0000025,
-				"cacheReadInputTokenCost": 0.0000002
-			},
-			"tax-grok-4-1-fast-non-reasoning": {
-				"inputCostPerToken": 0.0000002,
-				"outputCostPerToken": 0.0000005,
-				"cacheReadInputTokenCost": 0.00000005
-			},
-			"tax-grok-4-20-non-reasoning": {
-				"inputCostPerToken": 0.000002,
-				"outputCostPerToken": 0.000006,
-				"cacheReadInputTokenCost": 0.0000002
 			}
 		}
 	}

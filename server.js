@@ -102,7 +102,7 @@ function runCcusage(since, until) {
 		}
 
 		// Fallback: npx com shell. Aspas em cada argumento para sobreviver a
-		// caminhos com espaco (ex.: "OneDrive - Votorantim").
+		// caminhos com espaco (ex.: "OneDrive - Empresa").
 		const isWin = process.platform === 'win32';
 		const quote = (a) => (/[\s"]/.test(a) ? '"' + a.replace(/"/g, isWin ? '""' : '\\"') + '"' : a);
 		const cmdLine = 'npx ' + ['-y', 'ccusage@latest', ...args].map(quote).join(' ');
@@ -255,6 +255,10 @@ async function getUsage(since, until) {
 			return day >= lo && day <= hi;
 		});
 	}
+	// poda entradas vencidas: cada intervalo de datas gera uma chave nova e o Map cresceria sem limite
+	for (const [k, v] of usageCache) {
+		if (Date.now() - v.at >= USAGE_TTL_MS) usageCache.delete(k);
+	}
 	usageCache.set(key, { at: Date.now(), data });
 	return data;
 }
@@ -329,8 +333,10 @@ function createServer() {
 			}
 			let file = url.pathname === '/' ? '/index.html' : url.pathname;
 			file = path.normalize(file).replace(/^([.][.][/\\])+/, '');
-			const full = path.join(ROOT, 'public', file);
-			if (!full.startsWith(path.join(ROOT, 'public'))) {
+			const pubDir = path.join(ROOT, 'public');
+			const full = path.join(pubDir, file);
+			// exige o separador apos a base: um irmao "public-x" nao pode passar como "public"
+			if (full !== pubDir && !full.startsWith(pubDir + path.sep)) {
 				res.writeHead(403);
 				return res.end('Forbidden');
 			}
