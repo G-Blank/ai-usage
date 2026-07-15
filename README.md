@@ -123,7 +123,7 @@ O envio é **incremental**: hash por mês, e só os meses alterados são reenvia
 
 Se algum destino falhar, os hashes não são consolidados e o próximo sync **retenta** automaticamente.
 
-Configure em `config.json` — ou melhor, em **`config.local.json`** (mesmo formato, sobrepõe o config.json e está no `.gitignore`: é onde ficam segredos como SAS token):
+**Configure pela interface**: clique no pill **sync** no topo do painel — o formulário permite habilitar, definir o intervalo, a identidade (usuário/máquina) e os destinos (file, azureBlob, webhook) com suas camadas, e salva tudo em `config.local.json` aplicando na hora, sem reiniciar. Também dá para editar o arquivo na mão — **`config.local.json`** (mesmo formato do config.json, sobrepõe ele e está no `.gitignore`: é onde ficam segredos como SAS token):
 
 ```json
 {

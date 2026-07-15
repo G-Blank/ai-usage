@@ -398,12 +398,80 @@ function sendJson(res, status, obj) {
 
 // ---------------- sync (opcional, desacoplado) ----------------
 let SYNC = null;
-if (CONFIG.sync && CONFIG.sync.enabled) {
-	try {
-		SYNC = require('./sync.js').createSync({ config: CONFIG, configDir: CONFIG_DIR, getUsage, log: console });
-	} catch (e) {
-		console.warn('[dashboard] sync desativado (falha ao carregar):', e.message);
+let SERVER_STARTED = false;
+
+// (re)cria o modulo de sync a partir de CONFIG.sync (usado no boot e quando a
+// config e salva pela interface)
+function setupSync() {
+	if (SYNC && SYNC.stop) SYNC.stop();
+	SYNC = null;
+	if (CONFIG.sync && CONFIG.sync.enabled) {
+		try {
+			SYNC = require('./sync.js').createSync({ config: CONFIG, configDir: CONFIG_DIR, getUsage, log: console });
+		} catch (e) {
+			console.warn('[dashboard] sync desativado (falha ao carregar):', e.message);
+		}
 	}
+}
+setupSync();
+
+// Valida e normaliza a config de sync vinda da interface. Pura (testavel):
+// nunca lanca, devolve { ok, errors, config } com defaults aplicados.
+const SYNC_REQUIRED_FIELD = { file: 'dir', azureBlob: 'sasUrl', webhook: 'url' };
+const SYNC_LAYERS = ['raw', 'table', 'delta'];
+
+function validateSyncConfig(input) {
+	const errors = [];
+	const src = (input && typeof input === 'object') ? input : {};
+	const ident = (v) => (typeof v === 'string' && v.trim()) ? v.trim() : 'auto';
+	const cfg = {
+		enabled: src.enabled === true,
+		intervalMinutes: Math.max(1, parseInt(src.intervalMinutes, 10) || 30),
+		user: ident(src.user),
+		machine: ident(src.machine),
+		targets: []
+	};
+	(Array.isArray(src.targets) ? src.targets : []).forEach((t, i) => {
+		const label = 'destino ' + (i + 1);
+		if (!t || typeof t !== 'object') { errors.push(label + ': invalido'); return; }
+		const field = SYNC_REQUIRED_FIELD[t.type];
+		if (!field) { errors.push(label + ': tipo desconhecido: ' + t.type); return; }
+		if (!t[field] || typeof t[field] !== 'string' || !t[field].trim()) { errors.push(label + ' (' + t.type + '): campo "' + field + '" obrigatorio'); return; }
+		const out = { type: t.type };
+		out[field] = t[field].trim();
+		if (t.prefix && typeof t.prefix === 'string') out.prefix = t.prefix;
+		if (t.type === 'webhook' && t.headers && typeof t.headers === 'object' && !Array.isArray(t.headers)) out.headers = t.headers;
+		const layers = Array.isArray(t.layers) ? t.layers.filter((l) => SYNC_LAYERS.includes(l)) : [];
+		if (layers.length) out.layers = layers;
+		cfg.targets.push(out);
+	});
+	if (cfg.enabled && !cfg.targets.length) errors.push('sync habilitado sem nenhum destino valido');
+	return { ok: !errors.length, errors, config: cfg };
+}
+
+// Persiste a config de sync em config.local.json (fora do git: SAS e headers
+// sao segredos) e recarrega o modulo a quente.
+function saveSyncConfig(cfg) {
+	const localPath = path.join(CONFIG_DIR, 'config.local.json');
+	let local = {};
+	try { local = readJson(localPath); } catch (_) {}
+	local.sync = cfg;
+	fs.writeFileSync(localPath, JSON.stringify(local, null, '\t'));
+	CONFIG.sync = cfg;
+	setupSync();
+	if (SYNC && SERVER_STARTED) SYNC.start();
+}
+
+function readBody(req, limit) {
+	return new Promise((resolve, reject) => {
+		let s = '';
+		req.on('data', (d) => {
+			s += d;
+			if (s.length > (limit || 1e6)) { reject(new Error('payload muito grande')); req.destroy(); }
+		});
+		req.on('end', () => resolve(s));
+		req.on('error', reject);
+	});
 }
 
 function createServer() {
@@ -418,6 +486,18 @@ function createServer() {
 			}
 			if (url.pathname === '/api/sync/status') {
 				return sendJson(res, 200, { ok: true, status: SYNC ? SYNC.getStatus() : { enabled: false } });
+			}
+			if (url.pathname === '/api/sync/config') {
+				if (req.method === 'POST') {
+					let input;
+					try { input = JSON.parse(await readBody(req) || '{}'); }
+					catch (e) { return sendJson(res, 400, { ok: false, errors: ['JSON invalido: ' + e.message] }); }
+					const v = validateSyncConfig(input);
+					if (!v.ok) return sendJson(res, 400, { ok: false, errors: v.errors });
+					saveSyncConfig(v.config);
+					return sendJson(res, 200, { ok: true, config: v.config });
+				}
+				return sendJson(res, 200, { ok: true, config: CONFIG.sync || { enabled: false, intervalMinutes: 30, user: 'auto', machine: 'auto', targets: [] } });
 			}
 			if (url.pathname === '/api/sync/run' && req.method === 'POST') {
 				if (!SYNC) return sendJson(res, 400, { ok: false, error: 'sync desativado no config.json' });
@@ -494,6 +574,7 @@ function startServer() {
 			reject(e);
 		});
 		server.listen(CONFIG.port, () => {
+			SERVER_STARTED = true;
 			if (SYNC) SYNC.start();
 			console.log('');
 			console.log('  ccusage dashboard rodando em  http://localhost:' + CONFIG.port);
@@ -505,7 +586,7 @@ function startServer() {
 }
 
 // funcoes puras exportadas tambem para os testes (test/unit.test.js)
-module.exports = { startServer, CONFIG, parseModelName, sliceRange, costBreakdownOf };
+module.exports = { startServer, CONFIG, parseModelName, sliceRange, costBreakdownOf, validateSyncConfig };
 
 if (require.main === module) {
 	startServer().catch((e) => {

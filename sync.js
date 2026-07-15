@@ -261,16 +261,26 @@ function createSync({ config, configDir, getUsage, log }) {
 		}
 	}
 
+	let firstTimer = null;
+	let timer = null;
+
 	function start() {
-		if (!cfg.enabled) return;
+		if (!cfg.enabled || timer) return; // idempotente: nao empilha timers
 		const minutes = Math.max(1, cfg.intervalMinutes || 30);
 		const firstDelay = Math.max(0, cfg.initialDelaySeconds != null ? cfg.initialDelaySeconds : 10) * 1000;
-		setTimeout(() => run(false).catch((e) => logger.warn('[sync] erro:', e.message)), firstDelay);
-		setInterval(() => run(false).catch((e) => logger.warn('[sync] erro:', e.message)), minutes * 60 * 1000);
+		firstTimer = setTimeout(() => run(false).catch((e) => logger.warn('[sync] erro:', e.message)), firstDelay);
+		timer = setInterval(() => run(false).catch((e) => logger.warn('[sync] erro:', e.message)), minutes * 60 * 1000);
 		logger.log('[sync] ativo: a cada ' + minutes + ' min, destinos: ' + (cfg.targets || []).map((t) => t.type).join(', '));
 	}
 
-	return { run, start, getStatus: () => status };
+	// para os timers (usado quando a config e trocada pela interface e o sync e recriado)
+	function stop() {
+		clearTimeout(firstTimer);
+		clearInterval(timer);
+		firstTimer = timer = null;
+	}
+
+	return { run, start, stop, getStatus: () => status };
 }
 
 module.exports = { createSync, adapters, mergeHistory, toRows };

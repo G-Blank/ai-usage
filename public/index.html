@@ -81,6 +81,27 @@
 
 	.err{display:none;margin:14px 0;padding:12px 16px;border:1px solid #7a3030;background:#241416;border-radius:10px;color:#f0b7b7;font-size:13px}
 	.loading{opacity:.45;transition:opacity .2s}
+
+	.modal{position:fixed;inset:0;background:rgba(6,8,11,.62);display:flex;align-items:center;justify-content:center;z-index:50}
+	.modal-box{background:var(--panel);border:1px solid var(--line);border-radius:12px;padding:20px 22px;width:min(720px,94vw);max-height:88vh;overflow-y:auto}
+	.modal-box h3{font-size:14px;font-weight:600;margin-bottom:14px}
+	.modal-box h3 span{color:var(--amber)}
+	.sy-grid{display:flex;flex-wrap:wrap;gap:12px;align-items:center;margin-bottom:14px;font-size:12px;color:var(--muted)}
+	.sy-grid input[type=number],.sy-grid input[type=text]{background:var(--panel-2);border:1px solid var(--line);color:var(--text);border-radius:6px;padding:5px 8px;font-family:var(--font-num);font-size:12px}
+	.sy-grid input[type=number]{width:64px}
+	.sy-grid input[type=text]{width:110px}
+	.sy-target{border:1px solid var(--line);border-radius:10px;padding:12px;margin-bottom:10px;background:var(--panel-2)}
+	.sy-target .row{display:flex;flex-wrap:wrap;gap:8px;align-items:center;margin-bottom:8px;font-size:12px;color:var(--muted)}
+	.sy-target .row:last-child{margin-bottom:0}
+	.sy-target select{background:var(--bg);border:1px solid var(--line);color:var(--text);border-radius:6px;padding:5px 8px;font-size:12px}
+	.sy-target input[type=text]{flex:1;min-width:180px;background:var(--bg);border:1px solid var(--line);color:var(--text);border-radius:6px;padding:5px 8px;font-family:var(--font-num);font-size:12px}
+	.sy-target .layers label{margin-right:10px}
+	.sy-target .del{margin-left:auto;color:#e57373;border-color:#4a2a2a}
+	.modal-actions{display:flex;gap:8px;margin-top:14px;align-items:center}
+	#syMsg{font-size:12px;margin-top:10px;white-space:pre-line}
+	#syMsg.ok{color:#3ecf8e}
+	#syMsg.bad{color:#f0b7b7}
+	.sy-hint{font-size:11px;color:var(--faint);margin:2px 0 12px}
 </style>
 </head>
 <body>
@@ -98,9 +119,11 @@
 	<label>De <input type="date" id="since"></label>
 	<label>Até <input type="date" id="until"></label>
 	<button class="primary" id="apply">Aplicar</button>
-	<button class="ghost" id="thisMonth">Mês atual</button>
+	<button class="ghost" id="today">Hoje</button>
 	<button class="ghost" id="thisWeek">Essa semana</button>
 	<button class="ghost" id="last7">Últimos 7 dias</button>
+	<button class="ghost" id="thisMonth">Mês atual</button>
+	<button class="ghost" id="maxRange" title="todo o histórico disponível">MAX</button>
 	<span class="spacer"></span>
 	<div class="auto">
 		<label><input type="checkbox" id="autoChk" checked> Atualização automática</label>
@@ -160,6 +183,28 @@
 	</div>
 </section>
 
+<div class="modal" id="syncModal" style="display:none">
+	<div class="modal-box">
+		<h3>Sincronização <span>· data lake / banco</span></h3>
+		<p class="sy-hint">Salvo em <code>config.local.json</code> (fora do git — pode conter segredos como SAS token). Vale na hora, sem reiniciar o painel.</p>
+		<div class="sy-grid">
+			<label><input type="checkbox" id="syEnabled"> Habilitada</label>
+			<label>a cada <input type="number" id="syInterval" min="1" value="30"> min</label>
+			<label>usuário <input type="text" id="syUser" value="auto" title="auto = login da máquina · off = não enviar · outro texto = valor fixo"></label>
+			<label>máquina <input type="text" id="syMachine" value="auto" title="auto = hostname · off = não enviar · outro texto = valor fixo"></label>
+		</div>
+		<div id="syTargets"></div>
+		<button id="syAddTarget">+ adicionar destino</button>
+		<div class="modal-actions">
+			<button class="primary" id="sySave">Salvar</button>
+			<button id="syRunNow">Sincronizar agora</button>
+			<span class="spacer"></span>
+			<button class="ghost" id="syClose">Fechar</button>
+		</div>
+		<div id="syMsg"></div>
+	</div>
+</div>
+
 <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.js"></script>
 <script>
 'use strict';
@@ -200,6 +245,7 @@ const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;'
 function isoLocal(d){ return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); }
 function weekRange(now){ const a = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay()); const b = new Date(a.getFullYear(), a.getMonth(), a.getDate() + 6); return [isoLocal(a), isoLocal(b)]; }
 function last7Range(now){ const b = new Date(now.getFullYear(), now.getMonth(), now.getDate()); const a = new Date(b.getFullYear(), b.getMonth(), b.getDate() - 6); return [isoLocal(a), isoLocal(b)]; }
+function todayRange(now){ const t = isoLocal(now); return [t, t]; }
 
 function setRange(a, b){ $('since').value = a; $('until').value = b; }
 function setThisMonth(){
@@ -208,6 +254,8 @@ function setThisMonth(){
 }
 function setThisWeek(){ const [a, b] = weekRange(new Date()); setRange(a, b); }
 function setLast7(){ const [a, b] = last7Range(new Date()); setRange(a, b); }
+function setToday(){ const [a, b] = todayRange(new Date()); setRange(a, b); }
+function setMax(){ setRange('', ''); } // sem recorte: o servidor devolve todo o historico disponivel
 
 // ---------- filtro cruzado (estilo Power BI) ----------
 // S.sel === null  -> todos os modelos visiveis
@@ -377,78 +425,105 @@ const TOKEN_PARTS = [
 	{ key: 'cacheR', label: 'cache read',  color: '#a78bfa' },
 ];
 
+// Monta labels/datasets do grafico conforme o recorte. Pura (testavel):
+// recebe tudo por parametro, sem tocar em S nem no DOM. Modos:
+//   byDay      varios dias -> barras empilhadas por modelo (clique filtra)
+//   byDayType  varios dias, 1 modelo -> empilha por tipo de token
+//   byModel    1 dia -> eixo X por modelo, uma barra cada (clique filtra)
+//   byType     1 dia, 1 modelo -> eixo X por tipo de token
+// Na metrica de custo, a quebra por tipo exige o costBreakdown estimado pelo
+// servidor; sem ele (preco desconhecido), degrada para a barra unica do modelo.
+function buildChartData(daily, models, metric, fns){
+	const bar = { borderRadius: 3, maxBarThickness: 34 };
+	const entryOf = (d, name) => (d.models || []).find(x => x.name === name);
+	const totalOf = (e) => metric === 'tokens' ? (e.tokens || 0) : +(e.cost || 0).toFixed(4);
+	const partOf = (e, p) => metric === 'tokens' ? (e[p.key] || 0) : +((e.costBd && e.costBd[p.key]) || 0).toFixed(4);
+	const only = models.length === 1 ? models[0] : null;
+	const oneDay = daily.length === 1 ? daily[0] : null;
+	const canSplit = (es) => only !== null && (metric === 'tokens' || es.every(e => !e || e.costBd));
+
+	if (oneDay && only && canSplit([entryOf(oneDay, only)])){
+		const e = entryOf(oneDay, only);
+		return { mode: 'byType', labels: TOKEN_PARTS.map(p => p.label),
+			datasets: [Object.assign({ label: fns.shortModel(only),
+				data: TOKEN_PARTS.map(p => e ? partOf(e, p) : 0),
+				backgroundColor: TOKEN_PARTS.map(p => p.color) }, bar)] };
+	}
+	if (oneDay){
+		return { mode: 'byModel', labels: models.map(fns.shortModel),
+			datasets: [Object.assign({ label: '',
+				data: models.map(m => { const e = entryOf(oneDay, m); return e ? totalOf(e) : 0; }),
+				backgroundColor: models.map(fns.colorOf) }, bar)] };
+	}
+	const labels = daily.map(fns.dayLabel);
+	if (canSplit(daily.map(d => entryOf(d, only)))){
+		return { mode: 'byDayType', labels,
+			datasets: TOKEN_PARTS.map(p => Object.assign({ label: p.label,
+				data: daily.map(d => { const e = entryOf(d, only); return e ? partOf(e, p) : 0; }),
+				backgroundColor: p.color }, bar)) };
+	}
+	return { mode: 'byDay', labels,
+		datasets: models.map(m => Object.assign({ label: m,
+			data: daily.map(d => { const e = entryOf(d, m); return e ? totalOf(e) : 0; }),
+			backgroundColor: fns.colorOf(m) }, bar)) };
+}
+
 function renderChart(){
 	const models = activeModels();
-	const labels = S.daily.map(d => brDate(d.date).slice(0,5));
-	// com apenas 1 modelo, quebra a barra por tipo de token (entrada/saida/cache).
-	// Na metrica de custo isso depende do costBreakdown estimado pelo servidor:
-	// se algum dia do modelo nao tiver o detalhe (preco desconhecido), mantem a barra unica.
 	const only = models.length === 1 ? models[0] : null;
-	const dayOf = (d) => d.models.find(x => x.name === only);
-	const costSplit = only !== null && S.metric === 'cost' && S.daily.every(d => { const e = dayOf(d); return !e || e.costBd; });
-	const single = only !== null && (S.metric === 'tokens' || costSplit);
-
-	let datasets;
-	if (single){
-		datasets = TOKEN_PARTS.map(p => ({
-			label: p.label,
-			data: S.daily.map(d => {
-				const e = dayOf(d);
-				if (!e) return 0;
-				return S.metric === 'tokens' ? (e[p.key] || 0) : +(e.costBd[p.key] || 0).toFixed(4);
-			}),
-			backgroundColor: p.color,
-			borderRadius: 3, maxBarThickness: 34
-		}));
-	} else {
-		datasets = models.map(m => ({
-			label: m,
-			data: S.daily.map(d => {
-				const e = d.models.find(x => x.name === m);
-				return e ? (S.metric === 'tokens' ? e.tokens : +e.cost.toFixed(4)) : 0;
-			}),
-			backgroundColor: colorOf(m),
-			borderRadius: 3, maxBarThickness: 34
-		}));
-	}
+	const spec = buildChartData(S.daily, models, S.metric, {
+		shortModel, colorOf, dayLabel: (d) => brDate(d.date).slice(0,5)
+	});
+	const typeMode = spec.mode === 'byType' || spec.mode === 'byDayType';
+	const entryOf = (d) => d.models.find(x => x.name === only);
+	// tooltip dos modos por tipo: mostra tokens E custo (estimado) do tipo
+	const typeLine = (e, p) => {
+		const toks = e ? (e[p.key] || 0) : 0;
+		const cost = e && e.costBd ? e.costBd[p.key] : null;
+		return ' ' + p.label + ': ' + nf.format(toks) + ' tokens' + (cost != null ? ' · ' + nfUsd.format(cost) : '');
+	};
 
 	if (S.chart) S.chart.destroy();
 	S.chart = new Chart($('chart'), {
 		type: 'bar',
-		data: { labels, datasets },
+		data: { labels: spec.labels, datasets: spec.datasets },
 		options: {
 			responsive: true, maintainAspectRatio: false, animation: { duration: 200 },
 			onClick: (ev, els, chart) => {
-				// no modo de tipos de token os datasets nao sao modelos: nao filtra
-				if (single) return;
+				// nos modos por tipo de token nao ha modelo para filtrar
+				if (typeMode) return;
 				const hits = chart.getElementsAtEventForMode(ev, 'nearest', { intersect: true }, true);
 				if (!hits.length) return;
-				const model = chart.data.datasets[hits[0].datasetIndex].label;
+				const model = spec.mode === 'byModel' ? models[hits[0].index] : chart.data.datasets[hits[0].datasetIndex].label;
 				applySelection(model, ev.native && (ev.native.ctrlKey || ev.native.metaKey || ev.native.shiftKey));
 			},
-			onHover: (ev, els, chart) => { chart.canvas.style.cursor = (!single && els.length) ? 'pointer' : 'default'; },
+			onHover: (ev, els, chart) => { chart.canvas.style.cursor = (!typeMode && els.length) ? 'pointer' : 'default'; },
 			scales: {
 				x: { stacked: true, grid: { display: false }, ticks: { color: '#8b96a5', autoSkip: true, maxRotation: 0 } },
 				y: { stacked: true, grid: { color: '#232b36' }, ticks: { color: '#8b96a5',
 					callback: v => S.metric === 'tokens' ? compact(v) : '$' + v } }
 			},
 			plugins: {
-				// legenda so aparece no modo de tipos de token (senao a cor ja vem dos chips)
-				legend: single
+				// legenda so no empilhado por tipo (nos demais a cor ja vem dos chips/eixo X)
+				legend: spec.mode === 'byDayType'
 					? { display: true, position: 'top', labels: { color: '#8b96a5', boxWidth: 12, usePointStyle: true } }
 					: { display: false },
 				tooltip: {
 					callbacks: {
-						title: (items) => single ? (shortModel(only) + '  ·  ' + (items[0] && items[0].label)) : (items[0] && items[0].label),
+						title: (items) => {
+							const t = items[0] && items[0].label;
+							if (spec.mode === 'byDayType') return shortModel(only) + '  ·  ' + t;
+							if (spec.mode === 'byType') return shortModel(only) + '  ·  ' + brDate(S.daily[0].date);
+							if (spec.mode === 'byModel') return brDate(S.daily[0].date);
+							return t;
+						},
 						label: (ctx) => {
-							if (!single) return ' ' + shortModel(ctx.dataset.label) + ': ' +
+							if (spec.mode === 'byDayType') return typeLine(entryOf(S.daily[ctx.dataIndex]), TOKEN_PARTS[ctx.datasetIndex]);
+							if (spec.mode === 'byType') return typeLine(entryOf(S.daily[0]), TOKEN_PARTS[ctx.dataIndex]);
+							if (spec.mode === 'byModel') return ' ' + shortModel(models[ctx.dataIndex]) + ': ' +
 								(S.metric === 'tokens' ? nf.format(ctx.raw) + ' tokens' : nfUsd.format(ctx.raw));
-							// modelo unico: mostra tokens E custo (estimado) do tipo, em qualquer metrica
-							const e = dayOf(S.daily[ctx.dataIndex]);
-							const p = TOKEN_PARTS[ctx.datasetIndex];
-							const toks = e ? (e[p.key] || 0) : 0;
-							const cost = e && e.costBd ? e.costBd[p.key] : null;
-							return ' ' + p.label + ': ' + nf.format(toks) + ' tokens' + (cost != null ? ' · ' + nfUsd.format(cost) : '');
+							return ' ' + shortModel(ctx.dataset.label) + ': ' +
+								(S.metric === 'tokens' ? nf.format(ctx.raw) + ' tokens' : nfUsd.format(ctx.raw));
 						}
 					}
 				}
@@ -506,32 +581,166 @@ function exportCsv(){
 	const csv = '\uFEFF' + rows.map(r => r.join(';')).join('\r\n');
 	const a = document.createElement('a');
 	a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
-	a.download = `ccusage_${$('since').value}_a_${$('until').value}${(S.sel !== null || S.tag !== null) ? '_filtrado' : ''}.csv`;
+	a.download = `ccusage_${$('since').value || 'inicio'}_a_${$('until').value || 'hoje'}${(S.sel !== null || S.tag !== null) ? '_filtrado' : ''}.csv`;
 	a.click();
 	URL.revokeObjectURL(a.href);
 }
 
-// ---------- sync (indicador opcional) ----------
+// ---------- sync: indicador + configuracao pela interface ----------
 async function loadSyncStatus(){
 	try{
 		const r = await (await fetch('/api/sync/status')).json();
 		const st = r.status || {};
 		const pill = $('syncPill');
-		if (!st.enabled){ pill.style.display = 'none'; return; }
 		pill.style.display = '';
+		pill.title = 'clique para configurar a sincronização';
+		if (!st.enabled){ pill.textContent = 'sync: off'; pill.style.borderColor = 'var(--line)'; return; }
 		if (!st.lastRun){ pill.textContent = 'sync: aguardando'; return; }
 		const hh = new Date(st.lastRun).toLocaleTimeString('pt-BR', {hour:'2-digit', minute:'2-digit'});
 		const fail = (st.results||[]).some(x => !x.ok);
 		pill.textContent = 'sync: ' + (fail ? 'erro ' : 'ok ') + hh;
 		pill.style.borderColor = fail ? '#7a3030' : 'var(--line)';
-		pill.title = (st.results||[]).map(x => x.type + ': ' + x.detail).join('\n') || 'clique para sincronizar agora';
+		pill.title = ((st.results||[]).map(x => x.type + ': ' + x.detail).join('\n') || '') + '\nclique para configurar';
 	}catch(e){ /* silencioso */ }
 }
-$('syncPill') && ($('syncPill').onclick = async () => {
-	$('syncPill').textContent = 'sync: enviando…';
-	try{ await fetch('/api/sync/run', { method: 'POST' }); }catch(e){}
+
+// campos exigidos por tipo de destino (espelha o validador do servidor)
+const SY_FIELDS = {
+	file:      [{ key: 'dir',    ph: 'C:/lake/ccusage (pasta local, share, mount)' }],
+	azureBlob: [{ key: 'sasUrl', ph: 'https://conta.blob.core.windows.net/container?sv=... (SAS com sp=cw)' },
+	            { key: 'prefix', ph: 'prefixo opcional, ex.: bronze/ccusage/' }],
+	webhook:   [{ key: 'url',    ph: 'https://minha-api/ingest' },
+	            { key: 'headers', ph: 'headers opcionais em JSON, ex.: {"x-api-key":"..."}' }]
+};
+const SY_LAYERS = ['raw', 'table', 'delta'];
+let syTargets = []; // estado do formulario: [{type, dir/sasUrl/url, prefix, headers, layers:[]}]
+
+function syRenderTargets(){
+	const box = $('syTargets'); box.innerHTML = '';
+	syTargets.forEach((t, i) => {
+		const div = document.createElement('div');
+		div.className = 'sy-target';
+		const rowTop = document.createElement('div'); rowTop.className = 'row';
+		const sel = document.createElement('select');
+		Object.keys(SY_FIELDS).forEach(k => {
+			const o = document.createElement('option');
+			o.value = k; o.textContent = k; o.selected = t.type === k;
+			sel.appendChild(o);
+		});
+		sel.onchange = () => { t.type = sel.value; syRenderTargets(); };
+		rowTop.appendChild(sel);
+		const del = document.createElement('button');
+		del.className = 'del'; del.textContent = 'remover';
+		del.onclick = () => { syTargets.splice(i, 1); syRenderTargets(); };
+		rowTop.appendChild(del);
+		div.appendChild(rowTop);
+		SY_FIELDS[t.type].forEach(f => {
+			const row = document.createElement('div'); row.className = 'row';
+			const inp = document.createElement('input');
+			inp.type = 'text'; inp.placeholder = f.ph;
+			inp.value = f.key === 'headers' ? (t.headers ? JSON.stringify(t.headers) : '') : (t[f.key] || '');
+			inp.oninput = () => { t[f.key] = inp.value; };
+			row.appendChild(inp);
+			div.appendChild(row);
+		});
+		const rowL = document.createElement('div'); rowL.className = 'row layers';
+		rowL.appendChild(Object.assign(document.createElement('span'), { textContent: 'camadas:' }));
+		SY_LAYERS.forEach(l => {
+			const lab = document.createElement('label');
+			const chk = document.createElement('input');
+			chk.type = 'checkbox';
+			chk.checked = (t.layers || []).includes(l);
+			chk.onchange = () => {
+				t.layers = (t.layers || []).filter(x => x !== l);
+				if (chk.checked) t.layers.push(l);
+			};
+			lab.appendChild(chk);
+			lab.appendChild(document.createTextNode(' ' + l));
+			rowL.appendChild(lab);
+		});
+		rowL.appendChild(Object.assign(document.createElement('span'), { className: 'hint', textContent: 'nenhuma marcada = padrão do tipo' }));
+		div.appendChild(rowL);
+		box.appendChild(div);
+	});
+}
+
+function syMsg(text, ok){
+	const el = $('syMsg');
+	el.textContent = text;
+	el.className = ok ? 'ok' : 'bad';
+}
+
+async function openSyncModal(){
+	syMsg('', true);
+	try{
+		const r = await (await fetch('/api/sync/config')).json();
+		const c = r.config || {};
+		$('syEnabled').checked = c.enabled === true;
+		$('syInterval').value = c.intervalMinutes || 30;
+		$('syUser').value = c.user || 'auto';
+		$('syMachine').value = c.machine || 'auto';
+		syTargets = (c.targets || []).map(t => Object.assign({}, t, { layers: (t.layers || []).slice() }));
+	}catch(e){
+		syTargets = [];
+		syMsg('Falha ao carregar a configuração: ' + e.message, false);
+	}
+	syRenderTargets();
+	$('syncModal').style.display = 'flex';
+}
+
+async function saveSyncConfig(){
+	const targets = [];
+	let parseError = null;
+	syTargets.forEach((t, i) => {
+		const out = { type: t.type };
+		SY_FIELDS[t.type].forEach(f => {
+			if (f.key === 'headers'){
+				const raw = (typeof t.headers === 'string' ? t.headers : (t.headers ? JSON.stringify(t.headers) : '')).trim();
+				if (raw){
+					try{ out.headers = JSON.parse(raw); }
+					catch(e){ parseError = 'destino ' + (i+1) + ': headers não é um JSON válido'; }
+				}
+			} else if (t[f.key]) out[f.key] = t[f.key];
+		});
+		if ((t.layers || []).length) out.layers = t.layers;
+		targets.push(out);
+	});
+	if (parseError) return syMsg(parseError, false);
+	const body = {
+		enabled: $('syEnabled').checked,
+		intervalMinutes: parseInt($('syInterval').value, 10) || 30,
+		user: $('syUser').value.trim() || 'auto',
+		machine: $('syMachine').value.trim() || 'auto',
+		targets
+	};
+	try{
+		const res = await fetch('/api/sync/config', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+		const r = await res.json();
+		if (!r.ok) return syMsg('Não salvo:\n' + (r.errors || [r.error || 'erro desconhecido']).join('\n'), false);
+		syMsg('Configuração salva' + (body.enabled ? ' — sync ativo.' : ' — sync desligado.'), true);
+		loadSyncStatus();
+	}catch(e){
+		syMsg('Falha ao salvar: ' + e.message, false);
+	}
+}
+
+$('syncPill').onclick = openSyncModal;
+$('syClose').onclick = () => { $('syncModal').style.display = 'none'; };
+$('syncModal').onclick = (e) => { if (e.target === $('syncModal')) $('syncModal').style.display = 'none'; };
+$('syAddTarget').onclick = () => { syTargets.push({ type: 'file', layers: [] }); syRenderTargets(); };
+$('sySave').onclick = saveSyncConfig;
+$('syRunNow').onclick = async () => {
+	syMsg('sincronizando…', true);
+	try{
+		const r = await (await fetch('/api/sync/run', { method: 'POST' })).json();
+		if (!r.ok) return syMsg('Sync: ' + (r.error || 'erro'), false);
+		const st = r.status || {};
+		const fails = (st.results || []).filter(x => !x.ok);
+		syMsg(fails.length ? 'Sync com erro:\n' + fails.map(x => x.type + ': ' + x.detail).join('\n')
+			: 'Sync ok — ' + (st.deltaCount || 0) + ' linha(s) no delta.', !fails.length);
+	}catch(e){ syMsg('Falha: ' + e.message, false); }
 	loadSyncStatus();
-});
+};
 
 // ---------- auto refresh ----------
 function tick(){
@@ -553,12 +762,18 @@ $('apply').onclick = refresh;
 $('thisMonth').onclick = () => { setThisMonth(); refresh(); };
 $('thisWeek').onclick = () => { setThisWeek(); refresh(); };
 $('last7').onclick = () => { setLast7(); refresh(); };
+$('today').onclick = () => { setToday(); refresh(); };
+$('maxRange').onclick = () => { setMax(); refresh(); };
 $('refreshNow').onclick = refresh;
 $('exportCsv').onclick = exportCsv;
 $('clearFilter').onclick = () => { S.tag = null; selectAll(); };
 $('mTokens').onclick = () => { S.metric='tokens'; $('mTokens').classList.add('on'); $('mCost').classList.remove('on'); renderChart(); };
 $('mCost').onclick   = () => { S.metric='cost';   $('mCost').classList.add('on');   $('mTokens').classList.remove('on'); renderChart(); };
-document.addEventListener('keydown', (e) => { if (e.key === 'Escape'){ S.tag = null; selectAll(); } });
+document.addEventListener('keydown', (e) => {
+	if (e.key !== 'Escape') return;
+	if ($('syncModal').style.display !== 'none'){ $('syncModal').style.display = 'none'; return; }
+	S.tag = null; selectAll();
+});
 
 // ---------- boot ----------
 setThisMonth();

@@ -8,7 +8,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 
-const { parseModelName, sliceRange, costBreakdownOf } = require('../server.js');
+const { parseModelName, sliceRange, costBreakdownOf, validateSyncConfig } = require('../server.js');
 const { mergeHistory } = require('../sync.js');
 
 // ---------------- parseModelName ----------------
@@ -158,4 +158,118 @@ test('last7Range: hoje-6 ate hoje, inclusive viradas de mes', () => {
 	assert.deepEqual(dateFns.last7Range(new Date(2026, 6, 15)), ['2026-07-09', '2026-07-15']);
 	assert.deepEqual(dateFns.last7Range(new Date(2026, 7, 3)), ['2026-07-28', '2026-08-03']);
 	assert.deepEqual(dateFns.last7Range(new Date(2026, 0, 2)), ['2025-12-27', '2026-01-02']);
+});
+
+test('todayRange: hoje ate hoje', () => {
+	const fns = new Function(grabFn('isoLocal') + '\n' + grabFn('todayRange') + '\nreturn { todayRange };')();
+	assert.deepEqual(fns.todayRange(new Date(2026, 6, 15)), ['2026-07-15', '2026-07-15']);
+});
+
+// ---------------- buildChartData (extraida do index.html) ----------------
+function grabBlock(re, what) {
+	const m = html.match(re);
+	assert.ok(m, what + ' nao encontrado no index.html');
+	return m[0];
+}
+const buildChartData = new Function(
+	grabBlock(/^const TOKEN_PARTS = \[[\s\S]*?\];/m, 'TOKEN_PARTS') + '\n' +
+	grabBlock(/^function buildChartData[\s\S]*?^\}/m, 'buildChartData') +
+	'\nreturn buildChartData;'
+)();
+
+const fns = { shortModel: (m) => m.replace(/^claude-/, ''), colorOf: () => '#111', dayLabel: (d) => d.date };
+const mkModel = (name, over) => Object.assign({
+	name, input: 100, output: 50, cacheW: 10, cacheR: 40, tokens: 200, cost: 0.02,
+	costBd: { input: 0.01, output: 0.005, cacheW: 0.001, cacheR: 0.004 }
+}, over);
+const twoDays = (models) => [
+	{ date: '2026-07-01', models: models.map((m) => mkModel(m)) },
+	{ date: '2026-07-02', models: models.map((m) => mkModel(m)) }
+];
+
+test('buildChartData: varios dias e varios modelos -> um dataset por modelo (byDay)', () => {
+	const r = buildChartData(twoDays(['a-x', 'b-y']), ['a-x', 'b-y'], 'tokens', fns);
+	assert.equal(r.mode, 'byDay');
+	assert.deepEqual(r.labels, ['2026-07-01', '2026-07-02']);
+	assert.equal(r.datasets.length, 2);
+	assert.deepEqual(r.datasets[0].data, [200, 200]);
+});
+
+test('buildChartData: varios dias e um modelo -> tipos de token por dia (byDayType)', () => {
+	const r = buildChartData(twoDays(['a-x']), ['a-x'], 'tokens', fns);
+	assert.equal(r.mode, 'byDayType');
+	assert.equal(r.datasets.length, 4);
+	assert.deepEqual(r.datasets.map((d) => d.data[0]), [100, 50, 10, 40]);
+});
+
+test('buildChartData: um dia e varios modelos -> eixo X por modelo (byModel)', () => {
+	const daily = [{ date: '2026-07-01', models: [mkModel('claude-a', { tokens: 300 }), mkModel('b')] }];
+	const r = buildChartData(daily, ['claude-a', 'b'], 'tokens', fns);
+	assert.equal(r.mode, 'byModel');
+	assert.deepEqual(r.labels, ['a', 'b']);
+	assert.equal(r.datasets.length, 1);
+	assert.deepEqual(r.datasets[0].data, [300, 200]);
+});
+
+test('buildChartData: um dia e um modelo -> eixo X por tipo de token (byType)', () => {
+	const daily = [{ date: '2026-07-01', models: [mkModel('a-x')] }];
+	const r = buildChartData(daily, ['a-x'], 'tokens', fns);
+	assert.equal(r.mode, 'byType');
+	assert.deepEqual(r.labels, ['entrada', 'saída', 'cache write', 'cache read']);
+	assert.deepEqual(r.datasets[0].data, [100, 50, 10, 40]);
+});
+
+test('buildChartData: um dia, um modelo, metrica custo -> usa costBreakdown', () => {
+	const daily = [{ date: '2026-07-01', models: [mkModel('a-x')] }];
+	const r = buildChartData(daily, ['a-x'], 'cost', fns);
+	assert.equal(r.mode, 'byType');
+	assert.deepEqual(r.datasets[0].data, [0.01, 0.005, 0.001, 0.004]);
+});
+
+test('buildChartData: custo sem costBreakdown cai para barra unica do modelo (byModel)', () => {
+	const daily = [{ date: '2026-07-01', models: [mkModel('a-x', { costBd: null })] }];
+	const r = buildChartData(daily, ['a-x'], 'cost', fns);
+	assert.equal(r.mode, 'byModel');
+	assert.deepEqual(r.datasets[0].data, [0.02]);
+});
+
+test('buildChartData: sem dias -> byDay vazio, sem quebrar', () => {
+	const r = buildChartData([], ['a-x'], 'tokens', fns);
+	assert.equal(r.labels.length, 0);
+});
+
+// ---------------- validateSyncConfig ----------------
+test('validateSyncConfig: config valida e normalizada', () => {
+	const v = validateSyncConfig({
+		enabled: true, intervalMinutes: '15', user: 'off',
+		targets: [
+			{ type: 'file', dir: 'C:/lake', layers: ['table', 'delta', 'nope'] },
+			{ type: 'azureBlob', sasUrl: 'https://c.blob.core.windows.net/x?sv=1', prefix: 'bronze/' },
+			{ type: 'webhook', url: 'https://api/ingest', headers: { 'x-k': '1' } }
+		]
+	});
+	assert.equal(v.ok, true);
+	assert.equal(v.config.enabled, true);
+	assert.equal(v.config.intervalMinutes, 15);
+	assert.equal(v.config.user, 'off');
+	assert.equal(v.config.machine, 'auto');
+	assert.deepEqual(v.config.targets[0].layers, ['table', 'delta']);
+	assert.equal(v.config.targets[1].prefix, 'bronze/');
+	assert.deepEqual(v.config.targets[2].headers, { 'x-k': '1' });
+});
+
+test('validateSyncConfig: tipo desconhecido e campo obrigatorio faltando', () => {
+	const v = validateSyncConfig({ enabled: true, targets: [{ type: 'ftp', dir: 'x' }, { type: 'azureBlob' }] });
+	assert.equal(v.ok, false);
+	assert.equal(v.errors.length, 3); // tipo desconhecido + sasUrl faltando + nenhum destino valido com sync habilitado
+});
+
+test('validateSyncConfig: habilitado sem destino e erro; desabilitado sem destino e ok', () => {
+	assert.equal(validateSyncConfig({ enabled: true, targets: [] }).ok, false);
+	assert.equal(validateSyncConfig({ enabled: false, targets: [] }).ok, true);
+});
+
+test('validateSyncConfig: intervalo minimo 1 e default 30', () => {
+	assert.equal(validateSyncConfig({ targets: [] }).config.intervalMinutes, 30);
+	assert.equal(validateSyncConfig({ intervalMinutes: -5, targets: [] }).config.intervalMinutes, 1);
 });
