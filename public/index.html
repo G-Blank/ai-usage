@@ -360,18 +360,43 @@ function renderChips(){
 	});
 }
 
+// tipos de token, usados quando um unico modelo esta selecionado (metrica tokens)
+const TOKEN_PARTS = [
+	{ key: 'input',  label: 'entrada',     color: '#4f8ef7' },
+	{ key: 'output', label: 'saída',       color: '#3ecf8e' },
+	{ key: 'cacheW', label: 'cache write', color: '#f5b83d' },
+	{ key: 'cacheR', label: 'cache read',  color: '#a78bfa' },
+];
+
 function renderChart(){
 	const models = activeModels();
 	const labels = S.daily.map(d => brDate(d.date).slice(0,5));
-	const datasets = models.map(m => ({
-		label: m,
-		data: S.daily.map(d => {
-			const e = d.models.find(x => x.name === m);
-			return e ? (S.metric === 'tokens' ? e.tokens : +e.cost.toFixed(4)) : 0;
-		}),
-		backgroundColor: colorOf(m),
-		borderRadius: 3, maxBarThickness: 34
-	}));
+	// com apenas 1 modelo, quebra a barra por tipo de token (entrada/saida/cache)
+	const single = models.length === 1 && S.metric === 'tokens';
+
+	let datasets;
+	if (single){
+		const only = models[0];
+		datasets = TOKEN_PARTS.map(p => ({
+			label: p.label,
+			data: S.daily.map(d => {
+				const e = d.models.find(x => x.name === only);
+				return e ? (e[p.key] || 0) : 0;
+			}),
+			backgroundColor: p.color,
+			borderRadius: 3, maxBarThickness: 34
+		}));
+	} else {
+		datasets = models.map(m => ({
+			label: m,
+			data: S.daily.map(d => {
+				const e = d.models.find(x => x.name === m);
+				return e ? (S.metric === 'tokens' ? e.tokens : +e.cost.toFixed(4)) : 0;
+			}),
+			backgroundColor: colorOf(m),
+			borderRadius: 3, maxBarThickness: 34
+		}));
+	}
 
 	if (S.chart) S.chart.destroy();
 	S.chart = new Chart($('chart'), {
@@ -380,22 +405,28 @@ function renderChart(){
 		options: {
 			responsive: true, maintainAspectRatio: false, animation: { duration: 200 },
 			onClick: (ev, els, chart) => {
+				// no modo de tipos de token os datasets nao sao modelos: nao filtra
+				if (single) return;
 				const hits = chart.getElementsAtEventForMode(ev, 'nearest', { intersect: true }, true);
 				if (!hits.length) return;
 				const model = chart.data.datasets[hits[0].datasetIndex].label;
 				applySelection(model, ev.native && (ev.native.ctrlKey || ev.native.metaKey || ev.native.shiftKey));
 			},
-			onHover: (ev, els, chart) => { chart.canvas.style.cursor = els.length ? 'pointer' : 'default'; },
+			onHover: (ev, els, chart) => { chart.canvas.style.cursor = (!single && els.length) ? 'pointer' : 'default'; },
 			scales: {
 				x: { stacked: true, grid: { display: false }, ticks: { color: '#8b96a5', autoSkip: true, maxRotation: 0 } },
 				y: { stacked: true, grid: { color: '#232b36' }, ticks: { color: '#8b96a5',
 					callback: v => S.metric === 'tokens' ? compact(v) : '$' + v } }
 			},
 			plugins: {
-				legend: { display: false },
+				// legenda so aparece no modo de tipos de token (senao a cor ja vem dos chips)
+				legend: single
+					? { display: true, position: 'top', labels: { color: '#8b96a5', boxWidth: 12, usePointStyle: true } }
+					: { display: false },
 				tooltip: {
 					callbacks: {
-						label: (ctx) => ' ' + shortModel(ctx.dataset.label) + ': ' +
+						title: (items) => single ? (shortModel(models[0]) + '  ·  ' + (items[0] && items[0].label)) : (items[0] && items[0].label),
+						label: (ctx) => ' ' + (single ? ctx.dataset.label : shortModel(ctx.dataset.label)) + ': ' +
 							(S.metric === 'tokens' ? nf.format(ctx.raw) + ' tokens' : nfUsd.format(ctx.raw))
 					}
 				}

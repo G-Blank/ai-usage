@@ -10,6 +10,7 @@ config.local.json
 # Estado gerado em runtime
 sync-state.json
 usage-history.json
+usage-cache.json
 litellm-prices.json
 server.pid
 *.pid

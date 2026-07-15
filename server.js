@@ -225,7 +225,10 @@ async function autoMapPricing(data) {
 		if (added.length) {
 			cfg.$schema = cfg.$schema || 'https://ccusage.com/config-schema.json';
 			fs.writeFileSync(cfgPath, JSON.stringify(cfg, null, '\t'));
-			usageCache.clear(); // proximo refresh recalcula com os precos novos
+			// precos mudaram: invalida o cache e recalcula em segundo plano
+			usageCache = {};
+			saveUsageCache();
+			refreshUsage(CONFIG.agent);
 			LAST_AUTOMAP = added;
 			console.log('[dashboard] precos automapeados: ' + added.join(', '));
 		}
@@ -234,33 +237,79 @@ async function autoMapPricing(data) {
 	}
 }
 
-// Cache simples para nao rodar o ccusage a cada request do auto-refresh.
-const usageCache = new Map();
+// ---------------- cache de uso (historico completo, persistente) ----------------
+// O ccusage le TODO o historico de logs a cada execucao (o recorte de datas so
+// filtra a saida, nao reduz a leitura), entao trocar o periodo no painel dispararia
+// sempre uma execucao cara (~varios segundos). Estrategia: guardamos o historico ja
+// agregado em disco e servimos qualquer periodo filtrando na memoria (instantaneo).
+// Dias passados nunca mudam; so o dia atual precisa de dados novos, e isso e feito em
+// segundo plano (stale-while-revalidate) para o clique em "aplicar" nunca travar.
 const USAGE_TTL_MS = Math.max(20, CONFIG.refreshSeconds - 5) * 1000;
+const USAGE_CACHE_FILE = path.join(CONFIG_DIR, 'usage-cache.json');
+const refreshingAgents = new Set();
+
+let usageCache = {};
+try { usageCache = readJson(USAGE_CACHE_FILE); } catch (_) { usageCache = {}; }
+
+function saveUsageCache() {
+	try { fs.writeFileSync(USAGE_CACHE_FILE, JSON.stringify(usageCache)); }
+	catch (e) { console.warn('[dashboard] falha ao gravar cache de uso:', e.message); }
+}
+
+function localToday() {
+	const d = new Date();
+	return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0');
+}
+
+// Filtra o historico completo para o periodo pedido, sem tocar no ccusage.
+function sliceRange(data, since, until) {
+	const daily = (data && Array.isArray(data.daily)) ? data.daily : [];
+	if (!since && !until) return Object.assign({}, data, { daily });
+	const toIso = (s) => (s && s.length === 8 ? s.slice(0, 4) + '-' + s.slice(4, 6) + '-' + s.slice(6, 8) : s);
+	const lo = toIso(since) || '0000-00-00';
+	const hi = toIso(until) || '9999-99-99';
+	const filtered = daily.filter((d) => {
+		const day = d.period || d.date || '';
+		return day >= lo && day <= hi;
+	});
+	return Object.assign({}, data, { daily: filtered });
+}
+
+// Roda o ccusage para TODO o historico e atualiza o cache (usado no boot e no
+// refresh em segundo plano). Nunca roda duas vezes ao mesmo tempo por agente.
+async function refreshUsage(agent) {
+	if (refreshingAgents.has(agent)) return;
+	refreshingAgents.add(agent);
+	try {
+		const data = await runCcusage('', '');
+		enrichUsage(data);
+		autoMapPricing(data).catch((e) => console.warn('[dashboard] automap falhou:', e.message));
+		usageCache[agent] = { at: Date.now(), asOf: localToday(), data };
+		saveUsageCache();
+	} catch (e) {
+		console.warn('[dashboard] refresh do cache de uso falhou:', e.message);
+	} finally {
+		refreshingAgents.delete(agent);
+	}
+}
 
 async function getUsage(since, until) {
-	const key = since + ':' + until + ':' + CONFIG.agent;
-	const hit = usageCache.get(key);
-	if (hit && Date.now() - hit.at < USAGE_TTL_MS) return hit.data;
-	const data = await runCcusage(since, until);
-	enrichUsage(data);
-	autoMapPricing(data).catch((e) => console.warn('[dashboard] automap falhou:', e.message));
+	const agent = CONFIG.agent;
+	const entry = usageCache[agent];
 
-	if (data && Array.isArray(data.daily) && (since || until)) {
-		const toIso = (s) => (s && s.length === 8 ? s.slice(0, 4) + '-' + s.slice(4, 6) + '-' + s.slice(6, 8) : s);
-		const lo = toIso(since) || '0000-00-00';
-		const hi = toIso(until) || '9999-99-99';
-		data.daily = data.daily.filter((d) => {
-			const day = d.period || d.date || '';
-			return day >= lo && day <= hi;
-		});
+	// Cold start (nenhum cache ainda): busca uma vez, de forma bloqueante.
+	if (!entry || !entry.data) {
+		await refreshUsage(agent);
+		const e = usageCache[agent];
+		return sliceRange(e && e.data ? e.data : { daily: [] }, since, until);
 	}
-	// poda entradas vencidas: cada intervalo de datas gera uma chave nova e o Map cresceria sem limite
-	for (const [k, v] of usageCache) {
-		if (Date.now() - v.at >= USAGE_TTL_MS) usageCache.delete(k);
-	}
-	usageCache.set(key, { at: Date.now(), data });
-	return data;
+
+	// Ja ha cache: serve na hora. Revalida em segundo plano se o dia virou
+	// (os dados de ontem viraram finais) ou se passou o TTL de atualizacao.
+	const stale = entry.asOf !== localToday() || (Date.now() - entry.at) >= USAGE_TTL_MS;
+	if (stale) refreshUsage(agent); // sem await: stale-while-revalidate
+
+	return sliceRange(entry.data, since, until);
 }
 
 // ---------------- cotacao USD-BRL ----------------
