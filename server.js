@@ -237,6 +237,48 @@ async function autoMapPricing(data) {
 	}
 }
 
+// ---------------- custo estimado por tipo de token ----------------
+// O ccusage entrega so o custo total por modelo/dia. Para o grafico de modelo
+// unico, estimamos o custo por tipo multiplicando os tokens pelo preco unitario
+// (override do ccusage.json > tabela LiteLLM pelo nome ou pelo modelo base).
+// p = { input, output, cacheW, cacheR } em USD por token; null quando desconhecido.
+function costBreakdownOf(mb, p) {
+	if (!p || (!(p.input > 0) && !(p.output > 0))) return null;
+	const r = (n) => +n.toFixed(8);
+	return {
+		input: r((mb.inputTokens || 0) * (p.input || 0)),
+		output: r((mb.outputTokens || 0) * (p.output || 0)),
+		cacheW: r((mb.cacheCreationTokens || 0) * (p.cacheW || 0)),
+		cacheR: r((mb.cacheReadTokens || 0) * (p.cacheR || 0))
+	};
+}
+
+async function enrichCostBreakdowns(data) {
+	if (!data || !Array.isArray(data.daily)) return;
+	let ov = {};
+	try { ov = readJson(path.join(CONFIG_DIR, 'ccusage.json')).defaults.pricingOverrides || {}; } catch (_) {}
+
+	const names = new Set();
+	data.daily.forEach((d) => (d.modelBreakdowns || []).forEach((mb) => names.add(mb.modelName)));
+
+	let litellm; // carregado sob demanda (uma vez), so se algum modelo nao tiver override
+	const priceOf = {};
+	for (const n of names) {
+		if (!n) continue;
+		const o = ov[n];
+		if (o) {
+			priceOf[n] = { input: o.inputCostPerToken || 0, output: o.outputCostPerToken || 0, cacheW: o.cacheCreationInputTokenCost || 0, cacheR: o.cacheReadInputTokenCost || 0 };
+			continue;
+		}
+		if (litellm === undefined) litellm = await loadLitellm();
+		const e = litellm && (litellmLookup(litellm, n) || litellmLookup(litellm, parseModelName(n).base));
+		priceOf[n] = e ? { input: e.input_cost_per_token || 0, output: e.output_cost_per_token || 0, cacheW: e.cache_creation_input_token_cost || 0, cacheR: e.cache_read_input_token_cost || 0 } : null;
+	}
+	data.daily.forEach((d) => (d.modelBreakdowns || []).forEach((mb) => {
+		mb.costBreakdown = costBreakdownOf(mb, priceOf[mb.modelName]);
+	}));
+}
+
 // ---------------- cache de uso (historico completo, persistente) ----------------
 // O ccusage le TODO o historico de logs a cada execucao (o recorte de datas so
 // filtra a saida, nao reduz a leitura), entao trocar o periodo no painel dispararia
@@ -277,17 +319,22 @@ function sliceRange(data, since, until) {
 
 // Roda o ccusage para TODO o historico e atualiza o cache (usado no boot e no
 // refresh em segundo plano). Nunca roda duas vezes ao mesmo tempo por agente.
+// Retorna os dados coletados (ou null): o chamador NAO deve reler usageCache,
+// pois o auto-pricing pode zera-lo de forma concorrente para forcar recalculo.
 async function refreshUsage(agent) {
-	if (refreshingAgents.has(agent)) return;
+	if (refreshingAgents.has(agent)) return null;
 	refreshingAgents.add(agent);
 	try {
 		const data = await runCcusage('', '');
 		enrichUsage(data);
+		await enrichCostBreakdowns(data).catch((e) => console.warn('[dashboard] custo por tipo indisponivel:', e.message));
 		autoMapPricing(data).catch((e) => console.warn('[dashboard] automap falhou:', e.message));
 		usageCache[agent] = { at: Date.now(), asOf: localToday(), data };
 		saveUsageCache();
+		return data;
 	} catch (e) {
 		console.warn('[dashboard] refresh do cache de uso falhou:', e.message);
+		return null;
 	} finally {
 		refreshingAgents.delete(agent);
 	}
@@ -299,7 +346,8 @@ async function getUsage(since, until) {
 
 	// Cold start (nenhum cache ainda): busca uma vez, de forma bloqueante.
 	if (!entry || !entry.data) {
-		await refreshUsage(agent);
+		const data = await refreshUsage(agent);
+		if (data) return sliceRange(data, since, until);
 		const e = usageCache[agent];
 		return sliceRange(e && e.data ? e.data : { daily: [] }, since, until);
 	}
@@ -456,7 +504,8 @@ function startServer() {
 	});
 }
 
-module.exports = { startServer, CONFIG };
+// funcoes puras exportadas tambem para os testes (test/unit.test.js)
+module.exports = { startServer, CONFIG, parseModelName, sliceRange, costBreakdownOf };
 
 if (require.main === module) {
 	startServer().catch((e) => {

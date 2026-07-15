@@ -99,6 +99,8 @@
 	<label>Até <input type="date" id="until"></label>
 	<button class="primary" id="apply">Aplicar</button>
 	<button class="ghost" id="thisMonth">Mês atual</button>
+	<button class="ghost" id="thisWeek">Essa semana</button>
+	<button class="ghost" id="last7">Últimos 7 dias</button>
 	<span class="spacer"></span>
 	<div class="auto">
 		<label><input type="checkbox" id="autoChk" checked> Atualização automática</label>
@@ -193,13 +195,19 @@ const shortModel = (m) => { const t = S.modelTag[m]; return (t ? m.slice(t.lengt
 const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
 
 // ---------- datas ----------
+// funcoes puras (uma linha cada: os testes em test/unit.test.js as extraem do HTML)
+// isoLocal formata no fuso local: toISOString (UTC) viraria o dia errado em fusos positivos
+function isoLocal(d){ return d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0'); }
+function weekRange(now){ const a = new Date(now.getFullYear(), now.getMonth(), now.getDate() - now.getDay()); const b = new Date(a.getFullYear(), a.getMonth(), a.getDate() + 6); return [isoLocal(a), isoLocal(b)]; }
+function last7Range(now){ const b = new Date(now.getFullYear(), now.getMonth(), now.getDate()); const a = new Date(b.getFullYear(), b.getMonth(), b.getDate() - 6); return [isoLocal(a), isoLocal(b)]; }
+
+function setRange(a, b){ $('since').value = a; $('until').value = b; }
 function setThisMonth(){
 	const now = new Date();
-	// formata no fuso local: toISOString (UTC) viraria o dia errado em fusos positivos
-	const iso = (d) => d.getFullYear() + '-' + String(d.getMonth()+1).padStart(2,'0') + '-' + String(d.getDate()).padStart(2,'0');
-	$('since').value = iso(new Date(now.getFullYear(), now.getMonth(), 1));
-	$('until').value = iso(new Date(now.getFullYear(), now.getMonth()+1, 0));
+	setRange(isoLocal(new Date(now.getFullYear(), now.getMonth(), 1)), isoLocal(new Date(now.getFullYear(), now.getMonth()+1, 0)));
 }
+function setThisWeek(){ const [a, b] = weekRange(new Date()); setRange(a, b); }
+function setLast7(){ const [a, b] = last7Range(new Date()); setRange(a, b); }
 
 // ---------- filtro cruzado (estilo Power BI) ----------
 // S.sel === null  -> todos os modelos visiveis
@@ -252,7 +260,8 @@ async function loadUsage(){
 			models: (d.modelBreakdowns||[]).map(m => {
 				const inp = m.inputTokens||0, out = m.outputTokens||0, cw = m.cacheCreationTokens||0, cr = m.cacheReadTokens||0;
 				return { name: m.modelName, tag: m.tag || '', input: inp, output: out, cacheW: cw, cacheR: cr,
-					tokens: (m.totalTokens != null) ? m.totalTokens : inp+out+cw+cr, cost: m.cost||0 };
+					tokens: (m.totalTokens != null) ? m.totalTokens : inp+out+cw+cr, cost: m.cost||0,
+					costBd: m.costBreakdown || null };
 			})
 		})).sort((a,b)=> a.date < b.date ? -1 : 1);
 
@@ -360,7 +369,7 @@ function renderChips(){
 	});
 }
 
-// tipos de token, usados quando um unico modelo esta selecionado (metrica tokens)
+// tipos de token, usados quando um unico modelo esta selecionado
 const TOKEN_PARTS = [
 	{ key: 'input',  label: 'entrada',     color: '#4f8ef7' },
 	{ key: 'output', label: 'saída',       color: '#3ecf8e' },
@@ -371,17 +380,22 @@ const TOKEN_PARTS = [
 function renderChart(){
 	const models = activeModels();
 	const labels = S.daily.map(d => brDate(d.date).slice(0,5));
-	// com apenas 1 modelo, quebra a barra por tipo de token (entrada/saida/cache)
-	const single = models.length === 1 && S.metric === 'tokens';
+	// com apenas 1 modelo, quebra a barra por tipo de token (entrada/saida/cache).
+	// Na metrica de custo isso depende do costBreakdown estimado pelo servidor:
+	// se algum dia do modelo nao tiver o detalhe (preco desconhecido), mantem a barra unica.
+	const only = models.length === 1 ? models[0] : null;
+	const dayOf = (d) => d.models.find(x => x.name === only);
+	const costSplit = only !== null && S.metric === 'cost' && S.daily.every(d => { const e = dayOf(d); return !e || e.costBd; });
+	const single = only !== null && (S.metric === 'tokens' || costSplit);
 
 	let datasets;
 	if (single){
-		const only = models[0];
 		datasets = TOKEN_PARTS.map(p => ({
 			label: p.label,
 			data: S.daily.map(d => {
-				const e = d.models.find(x => x.name === only);
-				return e ? (e[p.key] || 0) : 0;
+				const e = dayOf(d);
+				if (!e) return 0;
+				return S.metric === 'tokens' ? (e[p.key] || 0) : +(e.costBd[p.key] || 0).toFixed(4);
 			}),
 			backgroundColor: p.color,
 			borderRadius: 3, maxBarThickness: 34
@@ -425,9 +439,17 @@ function renderChart(){
 					: { display: false },
 				tooltip: {
 					callbacks: {
-						title: (items) => single ? (shortModel(models[0]) + '  ·  ' + (items[0] && items[0].label)) : (items[0] && items[0].label),
-						label: (ctx) => ' ' + (single ? ctx.dataset.label : shortModel(ctx.dataset.label)) + ': ' +
-							(S.metric === 'tokens' ? nf.format(ctx.raw) + ' tokens' : nfUsd.format(ctx.raw))
+						title: (items) => single ? (shortModel(only) + '  ·  ' + (items[0] && items[0].label)) : (items[0] && items[0].label),
+						label: (ctx) => {
+							if (!single) return ' ' + shortModel(ctx.dataset.label) + ': ' +
+								(S.metric === 'tokens' ? nf.format(ctx.raw) + ' tokens' : nfUsd.format(ctx.raw));
+							// modelo unico: mostra tokens E custo (estimado) do tipo, em qualquer metrica
+							const e = dayOf(S.daily[ctx.dataIndex]);
+							const p = TOKEN_PARTS[ctx.datasetIndex];
+							const toks = e ? (e[p.key] || 0) : 0;
+							const cost = e && e.costBd ? e.costBd[p.key] : null;
+							return ' ' + p.label + ': ' + nf.format(toks) + ' tokens' + (cost != null ? ' · ' + nfUsd.format(cost) : '');
+						}
 					}
 				}
 			}
@@ -529,6 +551,8 @@ async function refresh(){
 // ---------- eventos ----------
 $('apply').onclick = refresh;
 $('thisMonth').onclick = () => { setThisMonth(); refresh(); };
+$('thisWeek').onclick = () => { setThisWeek(); refresh(); };
+$('last7').onclick = () => { setLast7(); refresh(); };
 $('refreshNow').onclick = refresh;
 $('exportCsv').onclick = exportCsv;
 $('clearFilter').onclick = () => { S.tag = null; selectAll(); };
