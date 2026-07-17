@@ -572,6 +572,50 @@ function renderChart(){
 	renderBars();
 }
 
+// Encaixa um rotulo na largura disponivel: devolve o texto (talvez truncado
+// com reticencias) ou null se nao couber de forma legivel. Pura (testavel);
+// measure = fn(texto) -> largura em px (no uso real, ctx.measureText).
+function fitLabel(text, maxWidth, measure){
+	if (!text) return null;
+	let t = String(text);
+	while (t.length && measure(t) > maxWidth) t = t.slice(0, -1);
+	if (t === String(text)) return t;
+	if (t.length < 3) return null; // truncado demais nao identifica nada
+	t = t.slice(0, -1) + '…';
+	return measure(t) <= maxWidth ? t : null;
+}
+
+// Plugin inline (zero dependencia extra): escreve o nome do modelo/tipo dentro
+// dos segmentos empilhados com espaco suficiente — da para bater o olho e ver
+// quem e o responsavel pelo maior consumo sem passar o mouse.
+const barLabelPlugin = {
+	id: 'barLabels',
+	afterDatasetsDraw(chart){
+		const opts = chart.options.plugins && chart.options.plugins.barLabels;
+		if (!opts || !opts.enabled) return;
+		const ctx = chart.ctx;
+		ctx.save();
+		ctx.font = '600 10px "IBM Plex Mono", ui-monospace, monospace';
+		ctx.textAlign = 'center';
+		ctx.textBaseline = 'middle';
+		ctx.fillStyle = 'rgba(10,13,17,.88)'; // texto escuro: legivel sobre toda a paleta
+		chart.data.datasets.forEach((ds, di) => {
+			const meta = chart.getDatasetMeta(di);
+			if (meta.hidden) return;
+			const label = opts.text ? opts.text(ds) : ds.label;
+			if (!label) return;
+			meta.data.forEach((el) => {
+				const p = el.getProps(['x', 'y', 'base', 'width'], true);
+				const h = p.base - p.y;
+				if (h < 13) return; // segmento baixo demais para texto
+				const t = fitLabel(label, p.width - 8, (s) => ctx.measureText(s).width);
+				if (t) ctx.fillText(t, p.x, p.y + h / 2);
+			});
+		});
+		ctx.restore();
+	}
+};
+
 function renderBars(){
 	const models = activeModels();
 	const only = models.length === 1 ? models[0] : null;
@@ -589,6 +633,7 @@ function renderBars(){
 
 	S.chart = new Chart($('chart'), {
 		type: 'bar',
+		plugins: [barLabelPlugin],
 		data: { labels: spec.labels, datasets: spec.datasets },
 		options: {
 			responsive: true, maintainAspectRatio: false, animation: { duration: 200 },
@@ -607,6 +652,11 @@ function renderBars(){
 					callback: v => S.metric === 'tokens' ? compact(v) : '$' + v } }
 			},
 			plugins: {
+				// rotulo com o nome do modelo/tipo dentro dos segmentos empilhados
+				barLabels: {
+					enabled: spec.mode === 'byDay' || spec.mode === 'byDayType',
+					text: (ds) => spec.mode === 'byDay' ? shortModel(ds.label) : ds.label
+				},
 				// legenda so no empilhado por tipo (nos demais a cor ja vem dos chips/eixo X)
 				legend: spec.mode === 'byDayType'
 					? { display: true, position: 'top', labels: { color: '#8b96a5', boxWidth: 12, usePointStyle: true } }

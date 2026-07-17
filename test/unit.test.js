@@ -299,6 +299,29 @@ test('buildPieByType: custo parcial (modelo com uso e sem preco) sinaliza costPa
 	assert.deepEqual(r.data, [0.01, 0.005, 0.001, 0.004]); // so o a-x entra na soma
 });
 
+// ---------------- fitLabel (rotulo dentro da barra) ----------------
+const fitLabel = new Function(grabBlock(/^function fitLabel[\s\S]*?^\}/m, 'fitLabel') + '\nreturn fitLabel;')();
+const measure6 = (s) => s.length * 6; // medidor fake: 6px por caractere
+
+test('fitLabel: texto que cabe volta inteiro', () => {
+	assert.equal(fitLabel('sonnet-4-6', 100, measure6), 'sonnet-4-6');
+});
+
+test('fitLabel: texto longo e truncado com reticencias', () => {
+	const r = fitLabel('sonnet-4-6-experimental', 60, measure6);
+	assert.ok(r.endsWith('…'), 'esperava reticencias: ' + r);
+	assert.ok(measure6(r) <= 60, 'truncado ainda nao cabe');
+});
+
+test('fitLabel: espaco minusculo demais retorna null', () => {
+	assert.equal(fitLabel('sonnet', 10, measure6), null);
+});
+
+test('fitLabel: texto vazio retorna null', () => {
+	assert.equal(fitLabel('', 100, measure6), null);
+	assert.equal(fitLabel(null, 100, measure6), null);
+});
+
 // ---------------- validateSyncConfig ----------------
 test('validateSyncConfig: config valida e normalizada', () => {
 	const v = validateSyncConfig({
