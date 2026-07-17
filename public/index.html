@@ -530,13 +530,12 @@ function buildPieByType(daily, models, metric){
 		colors: TOKEN_PARTS.map(p => p.color), usedCost, costPartial: usedCost && costMissing };
 }
 
-// ---------- callouts da pizza: percentual fora da fatia com linha de chamada ----------
-// Puras (testaveis). pctLabel devolve "50,0 %" ou null (fatia < 2% colidiria).
-function pctLabel(value, total){
-	if (!(total > 0) || !(value > 0)) return null;
-	const pct = value / total * 100;
-	if (pct < 2) return null;
-	return pct.toFixed(1).replace('.', ',') + ' %';
+// ---------- callouts da pizza: nome da fatia fora, com linha de chamada ----------
+// Puras (testaveis). calloutText devolve o nome do modelo/tipo, ou null quando a
+// fatia e minuscula (< 2%: as chamadas colidiriam) — o percentual fica no tooltip.
+function calloutText(label, value, total){
+	if (!(total > 0) || !(value > 0) || value / total * 100 < 2) return null;
+	return String(label || '') || null;
 }
 // Geometria da chamada: borda da fatia -> 12px para fora -> tracinho horizontal.
 function calloutGeometry(cx, cy, r, midAngle){
@@ -565,10 +564,13 @@ const pieCalloutPlugin = {
 			ctx.textBaseline = 'middle';
 			ctx.lineWidth = 1.5;
 			(meta.data || []).forEach((arc, i) => {
-				const label = pctLabel(+data[i] || 0, total);
+				const label = calloutText((chart.data.labels || [])[i], +data[i] || 0, total);
 				if (!label) return;
 				const p = arc.getProps(['x', 'y', 'outerRadius', 'startAngle', 'endAngle'], true);
 				const g = calloutGeometry(p.x, p.y, p.outerRadius, (p.startAngle + p.endAngle) / 2);
+				// trunca para caber na folga lateral reservada pelo layout.padding
+				const t = fitLabel(label, 96, (s) => ctx.measureText(s).width);
+				if (!t) return;
 				ctx.strokeStyle = (ds.backgroundColor || [])[i] || '#8b96a5';
 				ctx.beginPath();
 				ctx.moveTo(g.x1, g.y1);
@@ -577,7 +579,7 @@ const pieCalloutPlugin = {
 				ctx.stroke();
 				ctx.fillStyle = '#e7ecf2';
 				ctx.textAlign = g.align;
-				ctx.fillText(label, g.x3 + (g.align === 'left' ? 5 : -5), g.y3);
+				ctx.fillText(t, g.x3 + (g.align === 'left' ? 5 : -5), g.y3);
 			});
 			ctx.restore();
 		} catch (_) { /* cosmetico: nunca derruba o grafico */ }

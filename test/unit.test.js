@@ -337,20 +337,21 @@ test('fitLabel: texto vazio retorna null', () => {
 
 // ---------------- callouts da pizza (percentual com linha de chamada) ----------------
 const calloutFns = new Function(
-	grabBlock(/^function pctLabel[\s\S]*?^\}/m, 'pctLabel') + '\n' +
+	grabBlock(/^function calloutText[\s\S]*?^\}/m, 'calloutText') + '\n' +
 	grabBlock(/^function calloutGeometry[\s\S]*?^\}/m, 'calloutGeometry') +
-	'\nreturn { pctLabel, calloutGeometry };'
+	'\nreturn { calloutText, calloutGeometry };'
 )();
 
-test('pctLabel: percentual pt-BR com uma casa', () => {
-	assert.equal(calloutFns.pctLabel(50, 100), '50,0 %');
-	assert.equal(calloutFns.pctLabel(1, 3), '33,3 %');
+test('calloutText: devolve o nome da fatia (modelo/tipo)', () => {
+	assert.equal(calloutFns.calloutText('sonnet-4-6', 50, 100), 'sonnet-4-6');
+	assert.equal(calloutFns.calloutText('entrada', 1, 3), 'entrada');
 });
 
-test('pctLabel: fatia minuscula, zero ou total invalido nao ganham rotulo', () => {
-	assert.equal(calloutFns.pctLabel(1, 100), null);   // < 2%: colidiria com vizinhos
-	assert.equal(calloutFns.pctLabel(0, 100), null);
-	assert.equal(calloutFns.pctLabel(10, 0), null);
+test('calloutText: fatia minuscula, zero, total invalido ou sem nome nao ganham chamada', () => {
+	assert.equal(calloutFns.calloutText('x', 1, 100), null); // < 2%: colidiria com vizinhos
+	assert.equal(calloutFns.calloutText('x', 0, 100), null);
+	assert.equal(calloutFns.calloutText('x', 10, 0), null);
+	assert.equal(calloutFns.calloutText('', 50, 100), null);
 });
 
 test('calloutGeometry: fatia a direita ancora a esquerda do texto, e vice-versa', () => {
