@@ -469,6 +469,7 @@ function buildChartData(daily, models, metric, fns){
 	// barLabel: texto simples desenhado dentro do segmento pelo barLabelPlugin.
 	// E uma propriedade custom do dataset de proposito — funcao dentro de
 	// options.plugins seria auto-invocada pelo resolvedor do Chart.js e quebraria.
+	// So o empilhado por tipo usa; o grafico principal (byDay) fica limpo.
 	const labels = daily.map(fns.dayLabel);
 	if (canSplit(daily.map(d => entryOf(d, only)))){
 		return { mode: 'byDayType', labels,
@@ -477,7 +478,7 @@ function buildChartData(daily, models, metric, fns){
 				backgroundColor: p.color }, bar)) };
 	}
 	return { mode: 'byDay', labels,
-		datasets: models.map(m => Object.assign({ label: m, barLabel: fns.shortModel(m),
+		datasets: models.map(m => Object.assign({ label: m,
 			data: daily.map(d => { const e = entryOf(d, m); return e ? totalOf(e) : 0; }),
 			backgroundColor: fns.colorOf(m) }, bar)) };
 }
@@ -529,14 +530,71 @@ function buildPieByType(daily, models, metric){
 		colors: TOKEN_PARTS.map(p => p.color), usedCost, costPartial: usedCost && costMissing };
 }
 
+// ---------- callouts da pizza: percentual fora da fatia com linha de chamada ----------
+// Puras (testaveis). pctLabel devolve "50,0 %" ou null (fatia < 2% colidiria).
+function pctLabel(value, total){
+	if (!(total > 0) || !(value > 0)) return null;
+	const pct = value / total * 100;
+	if (pct < 2) return null;
+	return pct.toFixed(1).replace('.', ',') + ' %';
+}
+// Geometria da chamada: borda da fatia -> 12px para fora -> tracinho horizontal.
+function calloutGeometry(cx, cy, r, midAngle){
+	const cos = Math.cos(midAngle), sin = Math.sin(midAngle);
+	const x1 = cx + cos * r,        y1 = cy + sin * r;
+	const x2 = cx + cos * (r + 12), y2 = cy + sin * (r + 12);
+	const right = cos >= 0;
+	return { x1, y1, x2, y2, x3: x2 + (right ? 14 : -14), y3: y2, align: right ? 'left' : 'right' };
+}
+
+// Plugin inline: desenha os percentuais no estilo "template de pizza" (linha na
+// cor da fatia + texto fora). Le apenas dados simples do chart; try/catch porque
+// rotulo e cosmetico e nunca pode derrubar o render.
+const pieCalloutPlugin = {
+	id: 'pieCallouts',
+	afterDatasetsDraw(chart){
+		try {
+			if (chart.config.type !== 'pie') return;
+			const ds = (chart.data.datasets || [])[0] || {};
+			const data = ds.data || [];
+			const total = data.reduce((a, b) => a + (+b || 0), 0);
+			const meta = chart.getDatasetMeta(0);
+			const ctx = chart.ctx;
+			ctx.save();
+			ctx.font = '500 12px "IBM Plex Mono", ui-monospace, monospace';
+			ctx.textBaseline = 'middle';
+			ctx.lineWidth = 1.5;
+			(meta.data || []).forEach((arc, i) => {
+				const label = pctLabel(+data[i] || 0, total);
+				if (!label) return;
+				const p = arc.getProps(['x', 'y', 'outerRadius', 'startAngle', 'endAngle'], true);
+				const g = calloutGeometry(p.x, p.y, p.outerRadius, (p.startAngle + p.endAngle) / 2);
+				ctx.strokeStyle = (ds.backgroundColor || [])[i] || '#8b96a5';
+				ctx.beginPath();
+				ctx.moveTo(g.x1, g.y1);
+				ctx.lineTo(g.x2, g.y2);
+				ctx.lineTo(g.x3, g.y3);
+				ctx.stroke();
+				ctx.fillStyle = '#e7ecf2';
+				ctx.textAlign = g.align;
+				ctx.fillText(label, g.x3 + (g.align === 'left' ? 5 : -5), g.y3);
+			});
+			ctx.restore();
+		} catch (_) { /* cosmetico: nunca derruba o grafico */ }
+	}
+};
+
 function pieConfig(labels, data, colors, fmtLabel, extra){
 	return {
 		type: 'pie',
+		plugins: [pieCalloutPlugin],
 		data: { labels, datasets: [{ data, backgroundColor: colors, borderColor: '#0e1116', borderWidth: 2 }] },
 		options: Object.assign({
 			responsive: true, maintainAspectRatio: false, animation: { duration: 200 },
+			// folga nas laterais/topo para as linhas de chamada e os percentuais
+			layout: { padding: { left: 84, right: 84, top: 26, bottom: 6 } },
 			plugins: {
-				legend: { display: true, position: 'right', labels: { color: '#8b96a5', boxWidth: 12, usePointStyle: true } },
+				legend: { display: true, position: 'bottom', labels: { color: '#8b96a5', boxWidth: 12, usePointStyle: true, padding: 16 } },
 				tooltip: { callbacks: { label: fmtLabel } }
 			}
 		}, extra || {})

@@ -193,9 +193,8 @@ test('buildChartData: varios dias e varios modelos -> um dataset por modelo (byD
 	assert.deepEqual(r.labels, ['2026-07-01', '2026-07-02']);
 	assert.equal(r.datasets.length, 2);
 	assert.deepEqual(r.datasets[0].data, [200, 200]);
-	// rotulo dentro da barra: string simples no dataset (NUNCA funcao em options:
-	// o Chart.js auto-invoca funcoes de options como scriptable e quebra o render)
-	assert.equal(r.datasets[0].barLabel, 'a-x');
+	// grafico principal fica limpo: sem nome de modelo dentro das barras
+	assert.equal(r.datasets[0].barLabel, undefined);
 });
 
 test('buildChartData: varios dias e um modelo -> tipos de token por dia (byDayType)', () => {
@@ -334,6 +333,39 @@ test('fitLabel: espaco minusculo demais retorna null', () => {
 test('fitLabel: texto vazio retorna null', () => {
 	assert.equal(fitLabel('', 100, measure6), null);
 	assert.equal(fitLabel(null, 100, measure6), null);
+});
+
+// ---------------- callouts da pizza (percentual com linha de chamada) ----------------
+const calloutFns = new Function(
+	grabBlock(/^function pctLabel[\s\S]*?^\}/m, 'pctLabel') + '\n' +
+	grabBlock(/^function calloutGeometry[\s\S]*?^\}/m, 'calloutGeometry') +
+	'\nreturn { pctLabel, calloutGeometry };'
+)();
+
+test('pctLabel: percentual pt-BR com uma casa', () => {
+	assert.equal(calloutFns.pctLabel(50, 100), '50,0 %');
+	assert.equal(calloutFns.pctLabel(1, 3), '33,3 %');
+});
+
+test('pctLabel: fatia minuscula, zero ou total invalido nao ganham rotulo', () => {
+	assert.equal(calloutFns.pctLabel(1, 100), null);   // < 2%: colidiria com vizinhos
+	assert.equal(calloutFns.pctLabel(0, 100), null);
+	assert.equal(calloutFns.pctLabel(10, 0), null);
+});
+
+test('calloutGeometry: fatia a direita ancora a esquerda do texto, e vice-versa', () => {
+	const r = calloutFns.calloutGeometry(100, 100, 50, 0); // angulo 0 = direita
+	assert.equal(r.align, 'left');
+	assert.ok(r.x3 > r.x2 && r.x2 > r.x1, 'linha deve sair para fora, para a direita');
+	const l = calloutFns.calloutGeometry(100, 100, 50, Math.PI); // esquerda
+	assert.equal(l.align, 'right');
+	assert.ok(l.x3 < l.x2 && l.x2 < l.x1, 'linha deve sair para fora, para a esquerda');
+});
+
+test('calloutGeometry: comeca na borda da fatia', () => {
+	const g = calloutFns.calloutGeometry(100, 100, 50, 0);
+	assert.equal(Math.round(g.x1), 150); // centro + raio no angulo 0
+	assert.equal(Math.round(g.y1), 100);
 });
 
 // ---------------- validateSyncConfig ----------------
