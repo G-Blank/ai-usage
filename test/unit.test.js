@@ -193,6 +193,9 @@ test('buildChartData: varios dias e varios modelos -> um dataset por modelo (byD
 	assert.deepEqual(r.labels, ['2026-07-01', '2026-07-02']);
 	assert.equal(r.datasets.length, 2);
 	assert.deepEqual(r.datasets[0].data, [200, 200]);
+	// rotulo dentro da barra: string simples no dataset (NUNCA funcao em options:
+	// o Chart.js auto-invoca funcoes de options como scriptable e quebra o render)
+	assert.equal(r.datasets[0].barLabel, 'a-x');
 });
 
 test('buildChartData: varios dias e um modelo -> tipos de token por dia (byDayType)', () => {
@@ -200,6 +203,17 @@ test('buildChartData: varios dias e um modelo -> tipos de token por dia (byDayTy
 	assert.equal(r.mode, 'byDayType');
 	assert.equal(r.datasets.length, 4);
 	assert.deepEqual(r.datasets.map((d) => d.data[0]), [100, 50, 10, 40]);
+	assert.deepEqual(r.datasets.map((d) => d.barLabel), ['entrada', 'saída', 'cache write', 'cache read']);
+});
+
+test('buildChartData: modos de um dia nao poem barLabel (eixo X ja nomeia) e usam barra larga', () => {
+	const daily = [{ date: '2026-07-01', models: [mkModel('a-x'), mkModel('b-y')] }];
+	const byModel = buildChartData(daily, ['a-x', 'b-y'], 'tokens', fns);
+	assert.equal(byModel.datasets[0].barLabel, undefined);
+	assert.ok(byModel.datasets[0].maxBarThickness > 34, 'barra de dia unico deveria ser mais larga');
+	const byType = buildChartData(daily, ['a-x'], 'tokens', fns);
+	assert.equal(byType.datasets[0].barLabel, undefined);
+	assert.ok(byType.datasets[0].maxBarThickness > 34);
 });
 
 test('buildChartData: um dia e varios modelos -> eixo X por modelo (byModel)', () => {

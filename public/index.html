@@ -444,6 +444,8 @@ const TOKEN_PARTS = [
 // servidor; sem ele (preco desconhecido), degrada para a barra unica do modelo.
 function buildChartData(daily, models, metric, fns){
 	const bar = { borderRadius: 3, maxBarThickness: 34 };
+	// dia unico tem poucas barras: teto maior para nao virarem palitos
+	const wideBar = { borderRadius: 3, maxBarThickness: 96 };
 	const entryOf = (d, name) => (d.models || []).find(x => x.name === name);
 	const totalOf = (e) => metric === 'tokens' ? (e.tokens || 0) : +(e.cost || 0).toFixed(4);
 	const partOf = (e, p) => metric === 'tokens' ? (e[p.key] || 0) : +((e.costBd && e.costBd[p.key]) || 0).toFixed(4);
@@ -456,23 +458,26 @@ function buildChartData(daily, models, metric, fns){
 		return { mode: 'byType', labels: TOKEN_PARTS.map(p => p.label),
 			datasets: [Object.assign({ label: fns.shortModel(only),
 				data: TOKEN_PARTS.map(p => e ? partOf(e, p) : 0),
-				backgroundColor: TOKEN_PARTS.map(p => p.color) }, bar)] };
+				backgroundColor: TOKEN_PARTS.map(p => p.color) }, wideBar)] };
 	}
 	if (oneDay){
 		return { mode: 'byModel', labels: models.map(fns.shortModel),
 			datasets: [Object.assign({ label: '',
 				data: models.map(m => { const e = entryOf(oneDay, m); return e ? totalOf(e) : 0; }),
-				backgroundColor: models.map(fns.colorOf) }, bar)] };
+				backgroundColor: models.map(fns.colorOf) }, wideBar)] };
 	}
+	// barLabel: texto simples desenhado dentro do segmento pelo barLabelPlugin.
+	// E uma propriedade custom do dataset de proposito — funcao dentro de
+	// options.plugins seria auto-invocada pelo resolvedor do Chart.js e quebraria.
 	const labels = daily.map(fns.dayLabel);
 	if (canSplit(daily.map(d => entryOf(d, only)))){
 		return { mode: 'byDayType', labels,
-			datasets: TOKEN_PARTS.map(p => Object.assign({ label: p.label,
+			datasets: TOKEN_PARTS.map(p => Object.assign({ label: p.label, barLabel: p.label,
 				data: daily.map(d => { const e = entryOf(d, only); return e ? partOf(e, p) : 0; }),
 				backgroundColor: p.color }, bar)) };
 	}
 	return { mode: 'byDay', labels,
-		datasets: models.map(m => Object.assign({ label: m,
+		datasets: models.map(m => Object.assign({ label: m, barLabel: fns.shortModel(m),
 			data: daily.map(d => { const e = entryOf(d, m); return e ? totalOf(e) : 0; }),
 			backgroundColor: fns.colorOf(m) }, bar)) };
 }
@@ -547,7 +552,12 @@ function renderPieModel(){
 	S.chart = new Chart($('chart'), pieConfig(p.labels, p.data, p.colors,
 		(ctx) => pieValue(ctx.raw, total, S.metric === 'cost'),
 		{
-			onClick: (ev, els) => { if (els.length) applySelection(p.models[els[0].index], ev.native && (ev.native.ctrlKey || ev.native.metaKey || ev.native.shiftKey)); },
+			onClick: (ev, els) => {
+				if (!els.length) return;
+				const model = p.models[els[0].index];
+				const additive = ev.native && (ev.native.ctrlKey || ev.native.metaKey || ev.native.shiftKey);
+				setTimeout(() => applySelection(model, additive), 0); // fora do evento do Chart.js
+			},
 			onHover: (ev, els, chart) => { chart.canvas.style.cursor = els.length ? 'pointer' : 'default'; }
 		}));
 }
@@ -562,7 +572,8 @@ function renderPieType(){
 }
 
 function renderChart(){
-	if (S.chart) S.chart.destroy();
+	// destroy defensivo: um grafico em estado quebrado nao pode impedir os proximos
+	if (S.chart){ try { S.chart.destroy(); } catch (_) {} S.chart = null; }
 	const v = VIEWS[S.view];
 	$('chViewLabel').textContent = v.label;
 	$('chartTitle').textContent = v.title;
@@ -588,31 +599,35 @@ function fitLabel(text, maxWidth, measure){
 // Plugin inline (zero dependencia extra): escreve o nome do modelo/tipo dentro
 // dos segmentos empilhados com espaco suficiente — da para bater o olho e ver
 // quem e o responsavel pelo maior consumo sem passar o mouse.
+// Le APENAS ds.barLabel (string simples no dataset). Nao usa options.plugins:
+// o resolvedor de opcoes do Chart.js auto-invoca funcoes colocadas la e isso ja
+// quebrou o painel uma vez. O try/catch garante que rotulo nunca derruba o grafico.
 const barLabelPlugin = {
 	id: 'barLabels',
 	afterDatasetsDraw(chart){
-		const opts = chart.options.plugins && chart.options.plugins.barLabels;
-		if (!opts || !opts.enabled) return;
-		const ctx = chart.ctx;
-		ctx.save();
-		ctx.font = '600 10px "IBM Plex Mono", ui-monospace, monospace';
-		ctx.textAlign = 'center';
-		ctx.textBaseline = 'middle';
-		ctx.fillStyle = 'rgba(10,13,17,.88)'; // texto escuro: legivel sobre toda a paleta
-		chart.data.datasets.forEach((ds, di) => {
-			const meta = chart.getDatasetMeta(di);
-			if (meta.hidden) return;
-			const label = opts.text ? opts.text(ds) : ds.label;
-			if (!label) return;
-			meta.data.forEach((el) => {
-				const p = el.getProps(['x', 'y', 'base', 'width'], true);
-				const h = p.base - p.y;
-				if (h < 13) return; // segmento baixo demais para texto
-				const t = fitLabel(label, p.width - 8, (s) => ctx.measureText(s).width);
-				if (t) ctx.fillText(t, p.x, p.y + h / 2);
+		try {
+			const dss = (chart.data && chart.data.datasets) || [];
+			if (!dss.some(d => d.barLabel)) return;
+			const ctx = chart.ctx;
+			ctx.save();
+			ctx.font = '600 10px "IBM Plex Mono", ui-monospace, monospace';
+			ctx.textAlign = 'center';
+			ctx.textBaseline = 'middle';
+			ctx.fillStyle = 'rgba(10,13,17,.88)'; // texto escuro: legivel sobre toda a paleta
+			dss.forEach((ds, di) => {
+				if (!ds.barLabel) return;
+				const meta = chart.getDatasetMeta(di);
+				if (!meta || meta.hidden) return;
+				(meta.data || []).forEach((el) => {
+					const p = el.getProps(['x', 'y', 'base', 'width'], true);
+					const h = p.base - p.y;
+					if (!(h >= 13)) return; // segmento baixo demais (ou NaN) fica sem texto
+					const t = fitLabel(ds.barLabel, p.width - 8, (s) => ctx.measureText(s).width);
+					if (t) ctx.fillText(t, p.x, p.y + h / 2);
+				});
 			});
-		});
-		ctx.restore();
+			ctx.restore();
+		} catch (_) { /* desenho de rotulo e cosmetico: nunca pode quebrar o render */ }
 	}
 };
 
@@ -643,7 +658,10 @@ function renderBars(){
 				const hits = chart.getElementsAtEventForMode(ev, 'nearest', { intersect: true }, true);
 				if (!hits.length) return;
 				const model = spec.mode === 'byModel' ? models[hits[0].index] : chart.data.datasets[hits[0].datasetIndex].label;
-				applySelection(model, ev.native && (ev.native.ctrlKey || ev.native.metaKey || ev.native.shiftKey));
+				const additive = ev.native && (ev.native.ctrlKey || ev.native.metaKey || ev.native.shiftKey);
+				// adia para depois do evento: destruir o grafico dentro do proprio
+				// handler quebra o processamento interno do Chart.js
+				setTimeout(() => applySelection(model, additive), 0);
 			},
 			onHover: (ev, els, chart) => { chart.canvas.style.cursor = (!typeMode && els.length) ? 'pointer' : 'default'; },
 			scales: {
@@ -652,11 +670,6 @@ function renderBars(){
 					callback: v => S.metric === 'tokens' ? compact(v) : '$' + v } }
 			},
 			plugins: {
-				// rotulo com o nome do modelo/tipo dentro dos segmentos empilhados
-				barLabels: {
-					enabled: spec.mode === 'byDay' || spec.mode === 'byDayType',
-					text: (ds) => spec.mode === 'byDay' ? shortModel(ds.label) : ds.label
-				},
 				// legenda so no empilhado por tipo (nos demais a cor ja vem dos chips/eixo X)
 				legend: spec.mode === 'byDayType'
 					? { display: true, position: 'top', labels: { color: '#8b96a5', boxWidth: 12, usePointStyle: true } }
