@@ -238,6 +238,67 @@ test('buildChartData: sem dias -> byDay vazio, sem quebrar', () => {
 	assert.equal(r.labels.length, 0);
 });
 
+// ---------------- pizzas do carrossel (extraidas do index.html) ----------------
+const pieFns = new Function(
+	grabBlock(/^const TOKEN_PARTS = \[[\s\S]*?\];/m, 'TOKEN_PARTS') + '\n' +
+	grabBlock(/^function buildPieByModel[\s\S]*?^\}/m, 'buildPieByModel') + '\n' +
+	grabBlock(/^function buildPieByType[\s\S]*?^\}/m, 'buildPieByType') +
+	'\nreturn { buildPieByModel, buildPieByType };'
+)();
+
+test('buildPieByModel: soma o periodo por modelo e descarta zerados', () => {
+	const daily = [
+		{ date: '2026-07-01', models: [mkModel('a-x', { tokens: 100, cost: 0.01 }), mkModel('b-y', { tokens: 0, cost: 0 })] },
+		{ date: '2026-07-02', models: [mkModel('a-x', { tokens: 50, cost: 0.02 })] }
+	];
+	const r = pieFns.buildPieByModel(daily, ['a-x', 'b-y'], 'tokens', fns);
+	assert.deepEqual(r.labels, ['a-x']);
+	assert.deepEqual(r.data, [150]);
+	assert.deepEqual(r.models, ['a-x']); // nome completo preservado para o clique filtrar
+});
+
+test('buildPieByModel: metrica custo soma cost com arredondamento', () => {
+	const daily = [
+		{ date: '2026-07-01', models: [mkModel('a-x', { cost: 0.015 }), mkModel('b-y', { cost: 0.005 })] }
+	];
+	const r = pieFns.buildPieByModel(daily, ['a-x', 'b-y'], 'cost', fns);
+	assert.deepEqual(r.data, [0.015, 0.005]);
+});
+
+test('buildPieByType: soma tipos so dos modelos ativos', () => {
+	const daily = [
+		{ date: '2026-07-01', models: [mkModel('a-x'), mkModel('b-y', { input: 999 })] },
+		{ date: '2026-07-02', models: [mkModel('a-x')] }
+	];
+	const r = pieFns.buildPieByType(daily, ['a-x'], 'tokens');
+	assert.deepEqual(r.labels, ['entrada', 'saída', 'cache write', 'cache read']);
+	assert.deepEqual(r.data, [200, 100, 20, 80]); // 2 dias de a-x, b-y fora
+	assert.equal(r.usedCost, false);
+});
+
+test('buildPieByType: metrica custo usa costBreakdown quando existe', () => {
+	const daily = [{ date: '2026-07-01', models: [mkModel('a-x')] }];
+	const r = pieFns.buildPieByType(daily, ['a-x'], 'cost');
+	assert.equal(r.usedCost, true);
+	assert.deepEqual(r.data, [0.01, 0.005, 0.001, 0.004]);
+	assert.equal(r.costPartial, false);
+});
+
+test('buildPieByType: custo sem nenhum costBreakdown cai para tokens', () => {
+	const daily = [{ date: '2026-07-01', models: [mkModel('a-x', { costBd: null })] }];
+	const r = pieFns.buildPieByType(daily, ['a-x'], 'cost');
+	assert.equal(r.usedCost, false);
+	assert.deepEqual(r.data, [100, 50, 10, 40]);
+});
+
+test('buildPieByType: custo parcial (modelo com uso e sem preco) sinaliza costPartial', () => {
+	const daily = [{ date: '2026-07-01', models: [mkModel('a-x'), mkModel('b-y', { costBd: null })] }];
+	const r = pieFns.buildPieByType(daily, ['a-x', 'b-y'], 'cost');
+	assert.equal(r.usedCost, true);
+	assert.equal(r.costPartial, true);
+	assert.deepEqual(r.data, [0.01, 0.005, 0.001, 0.004]); // so o a-x entra na soma
+});
+
 // ---------------- validateSyncConfig ----------------
 test('validateSyncConfig: config valida e normalizada', () => {
 	const v = validateSyncConfig({

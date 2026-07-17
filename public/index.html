@@ -56,6 +56,9 @@
 	.metric-toggle button{border:0;border-radius:0;padding:5px 12px;background:transparent;color:var(--muted)}
 	.metric-toggle button.on{background:var(--panel-2);color:var(--text)}
 	.hint{font-size:11px;color:var(--faint)}
+	.carousel{display:flex;align-items:center;gap:4px}
+	.carousel button{padding:2px 10px;font-size:14px;line-height:1.3;font-family:var(--font-num)}
+	.carousel span{font-family:var(--font-num);font-size:11px;color:var(--muted);min-width:170px;text-align:center;user-select:none}
 	.chips{display:flex;flex-wrap:wrap;gap:6px;margin-left:auto}
 	.chip{display:flex;align-items:center;gap:6px;font-family:var(--font-num);font-size:11px;color:var(--muted);border:1px solid var(--line);border-radius:999px;padding:3px 10px;cursor:pointer;user-select:none}
 	.chip .dot{width:9px;height:9px;border-radius:2px;flex:none}
@@ -152,14 +155,19 @@
 </div>
 
 <section>
-	<h2>Consumo por dia · por modelo</h2>
+	<h2 id="chartTitle">Consumo por dia · por modelo</h2>
 	<div class="chart-wrap">
 		<div class="chart-head">
+			<div class="carousel">
+				<button class="ghost" id="chPrev" title="visão anterior">‹</button>
+				<span id="chViewLabel">barras · linha do tempo</span>
+				<button class="ghost" id="chNext" title="próxima visão">›</button>
+			</div>
 			<div class="metric-toggle">
 				<button id="mTokens" class="on">Tokens</button>
 				<button id="mCost">Custo (US$)</button>
 			</div>
-			<span class="hint">clique num modelo (barra ou chip) para filtrar tudo · Ctrl/Shift+clique adiciona ou remove da seleção</span>
+			<span class="hint" id="chartHint">clique num modelo (barra ou chip) para filtrar tudo · Ctrl/Shift+clique adiciona ou remove da seleção</span>
 			<div class="chips" id="chips"></div>
 		</div>
 		<div id="chartBox"><canvas id="chart" role="img" aria-label="Gráfico de colunas empilhadas: consumo diário dividido por modelo; clicar num segmento filtra o painel"></canvas></div>
@@ -217,6 +225,7 @@ const S = {
 	tag: null,            // filtro por tag; null = todas, '' = sem tag
 	modelTag: {},         // nome do modelo -> tag ('' quando sem tag)
 	metric: 'tokens',
+	view: 0,              // indice em VIEWS (carrossel de visões do gráfico)
 	rate: null, rateSource: null,
 	refreshSeconds: 60, countdown: 60, chart: null
 };
@@ -468,7 +477,102 @@ function buildChartData(daily, models, metric, fns){
 			backgroundColor: fns.colorOf(m) }, bar)) };
 }
 
+// ---------- carrossel de visões ----------
+const VIEWS = [
+	{ id: 'bars',     label: 'barras · linha do tempo',   title: 'Consumo por dia · por modelo',
+	  hint: 'clique num modelo (barra ou chip) para filtrar tudo · Ctrl/Shift+clique adiciona ou remove da seleção' },
+	{ id: 'pieModel', label: 'pizza · rateio por modelo', title: 'Rateio do período · por modelo',
+	  hint: 'participação de cada modelo no período · clique numa fatia para filtrar' },
+	{ id: 'pieType',  label: 'pizza · por tipo de token', title: 'Rateio do período · por tipo de token',
+	  hint: 'entrada / saída / cache write / cache read no período · respeita o modelo selecionado nos chips' }
+];
+function setView(i){
+	S.view = (i + VIEWS.length) % VIEWS.length;
+	renderChart();
+}
+
+// Rateio do periodo por modelo. Pura (testavel): nao segrega pela selecao de
+// modelos (a pizza E a visao por modelo); modelos zerados saem para nao poluir.
+function buildPieByModel(daily, models, metric, fns){
+	const sums = models.map(m => {
+		let v = 0;
+		daily.forEach(d => { const e = (d.models || []).find(x => x.name === m); if (e) v += metric === 'tokens' ? (e.tokens || 0) : (e.cost || 0); });
+		return metric === 'cost' ? +v.toFixed(4) : v;
+	});
+	const keep = models.map((m, i) => ({ m, v: sums[i] })).filter(x => x.v > 0);
+	return { labels: keep.map(x => fns.shortModel(x.m)), models: keep.map(x => x.m), data: keep.map(x => x.v), colors: keep.map(x => fns.colorOf(x.m)) };
+}
+
+// Rateio do periodo por tipo de token, somando apenas os modelos ativos.
+// Na metrica de custo usa o costBreakdown estimado; se nenhum modelo ativo
+// tiver preco conhecido, cai para tokens (usedCost=false). costPartial indica
+// que algum modelo com uso ficou de fora da soma de custo (sem preco).
+function buildPieByType(daily, models, metric){
+	const on = new Set(models);
+	const tok = { input: 0, output: 0, cacheW: 0, cacheR: 0 };
+	const cst = { input: 0, output: 0, cacheW: 0, cacheR: 0 };
+	let costKnown = false, costMissing = false;
+	daily.forEach(d => (d.models || []).forEach(e => {
+		if (!on.has(e.name)) return;
+		TOKEN_PARTS.forEach(p => { tok[p.key] += e[p.key] || 0; });
+		if (e.costBd){ costKnown = true; TOKEN_PARTS.forEach(p => { cst[p.key] += e.costBd[p.key] || 0; }); }
+		else if ((e.tokens || 0) > 0) costMissing = true;
+	}));
+	const usedCost = metric === 'cost' && costKnown;
+	const src = usedCost ? cst : tok;
+	return { labels: TOKEN_PARTS.map(p => p.label), data: TOKEN_PARTS.map(p => usedCost ? +src[p.key].toFixed(4) : src[p.key]),
+		colors: TOKEN_PARTS.map(p => p.color), usedCost, costPartial: usedCost && costMissing };
+}
+
+function pieConfig(labels, data, colors, fmtLabel, extra){
+	return {
+		type: 'pie',
+		data: { labels, datasets: [{ data, backgroundColor: colors, borderColor: '#0e1116', borderWidth: 2 }] },
+		options: Object.assign({
+			responsive: true, maintainAspectRatio: false, animation: { duration: 200 },
+			plugins: {
+				legend: { display: true, position: 'right', labels: { color: '#8b96a5', boxWidth: 12, usePointStyle: true } },
+				tooltip: { callbacks: { label: fmtLabel } }
+			}
+		}, extra || {})
+	};
+}
+const pieValue = (raw, total, asCost) => ' ' + (asCost ? nfUsd.format(raw) : nf.format(raw) + ' tokens') +
+	' · ' + (total > 0 ? (raw / total * 100).toFixed(1).replace('.', ',') : '0') + '%';
+
+function renderPieModel(){
+	const models = visibleModels();
+	const p = buildPieByModel(S.daily, models, S.metric, { shortModel, colorOf });
+	const total = p.data.reduce((a, b) => a + b, 0);
+	S.chart = new Chart($('chart'), pieConfig(p.labels, p.data, p.colors,
+		(ctx) => pieValue(ctx.raw, total, S.metric === 'cost'),
+		{
+			onClick: (ev, els) => { if (els.length) applySelection(p.models[els[0].index], ev.native && (ev.native.ctrlKey || ev.native.metaKey || ev.native.shiftKey)); },
+			onHover: (ev, els, chart) => { chart.canvas.style.cursor = els.length ? 'pointer' : 'default'; }
+		}));
+}
+
+function renderPieType(){
+	const p = buildPieByType(S.daily, activeModels(), S.metric);
+	const total = p.data.reduce((a, b) => a + b, 0);
+	if (S.metric === 'cost' && !p.usedCost) $('chartHint').textContent = 'sem preço conhecido para os modelos ativos: mostrando tokens';
+	else if (p.costPartial) $('chartHint').textContent = 'custo estimado · modelos sem preço conhecido ficaram de fora da soma';
+	S.chart = new Chart($('chart'), pieConfig(p.labels, p.data, p.colors,
+		(ctx) => pieValue(ctx.raw, total, p.usedCost)));
+}
+
 function renderChart(){
+	if (S.chart) S.chart.destroy();
+	const v = VIEWS[S.view];
+	$('chViewLabel').textContent = v.label;
+	$('chartTitle').textContent = v.title;
+	$('chartHint').textContent = v.hint;
+	if (v.id === 'pieModel') return renderPieModel();
+	if (v.id === 'pieType') return renderPieType();
+	renderBars();
+}
+
+function renderBars(){
 	const models = activeModels();
 	const only = models.length === 1 ? models[0] : null;
 	const spec = buildChartData(S.daily, models, S.metric, {
@@ -483,7 +587,6 @@ function renderChart(){
 		return ' ' + p.label + ': ' + nf.format(toks) + ' tokens' + (cost != null ? ' · ' + nfUsd.format(cost) : '');
 	};
 
-	if (S.chart) S.chart.destroy();
 	S.chart = new Chart($('chart'), {
 		type: 'bar',
 		data: { labels: spec.labels, datasets: spec.datasets },
@@ -769,6 +872,8 @@ $('exportCsv').onclick = exportCsv;
 $('clearFilter').onclick = () => { S.tag = null; selectAll(); };
 $('mTokens').onclick = () => { S.metric='tokens'; $('mTokens').classList.add('on'); $('mCost').classList.remove('on'); renderChart(); };
 $('mCost').onclick   = () => { S.metric='cost';   $('mCost').classList.add('on');   $('mTokens').classList.remove('on'); renderChart(); };
+$('chPrev').onclick = () => setView(S.view - 1);
+$('chNext').onclick = () => setView(S.view + 1);
 document.addEventListener('keydown', (e) => {
 	if (e.key !== 'Escape') return;
 	if ($('syncModal').style.display !== 'none'){ $('syncModal').style.display = 'none'; return; }
