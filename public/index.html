@@ -111,6 +111,10 @@
 
 <header>
 	<h1>ccusage <span>· painel de consumo</span></h1>
+	<div class="metric-toggle" id="screenTabs">
+		<button id="tabMain" class="on">Painel</button>
+		<button id="tabAnalysis">Análise</button>
+	</div>
 	<span class="pill" id="agentPill">agente: —</span>
 	<span class="pill" id="syncPill" style="display:none;cursor:pointer" title="clique para sincronizar agora">sync: —</span>
 	<span id="status">carregando…</span>
@@ -154,7 +158,21 @@
 	<div class="card hero"><div class="k">Custo no período</div><div class="v" id="cBrl">—</div><div class="s" id="cBrlSub">—</div></div>
 </div>
 
-<section>
+<section id="analysisSection" style="display:none">
+	<h2>Análise · comparação de modelos no período</h2>
+	<div class="cards" id="anCards"></div>
+	<div class="table-scroll">
+		<table id="anTbl">
+			<thead><tr>
+				<th>#</th><th>Modelo</th><th>Tag</th><th>Total tokens</th><th>Custo (US$)</th><th>US$ / M tokens</th><th>% do custo</th>
+			</tr></thead>
+			<tbody></tbody>
+		</table>
+	</div>
+	<p class="hint" style="margin-top:8px">compara os modelos visíveis (respeita a tag e o período; a seleção de modelos do painel não se aplica aqui) · US$/M = custo do período ÷ tokens do período × 1 milhão</p>
+</section>
+
+<section id="chartSection">
 	<h2 id="chartTitle">Consumo por dia · por modelo</h2>
 	<div class="chart-wrap">
 		<div class="chart-head">
@@ -174,7 +192,7 @@
 	</div>
 </section>
 
-<section class="table-wrap">
+<section class="table-wrap" id="tableSection">
 	<div class="table-head">
 		<h2 style="margin:0">Detalhe diário por modelo</h2>
 		<span class="spacer"></span>
@@ -226,7 +244,9 @@ const S = {
 	modelTag: {},         // nome do modelo -> tag ('' quando sem tag)
 	metric: 'tokens',
 	view: 0,              // indice em VIEWS (carrossel de visões do gráfico)
+	screen: 'main',       // 'main' | 'analysis'
 	rate: null, rateSource: null,
+	dayRates: {},         // 'YYYY-MM-DD' -> fechamento USD-BRL do dia (dias passados)
 	refreshSeconds: 60, countdown: 60, chart: null
 };
 
@@ -300,6 +320,21 @@ async function loadRate(){
 	}catch(e){ /* mantem ultimo valor */ }
 }
 
+// fechamento do dolar por dia (dias passados nao flutuam); hoje usa a cotacao corrente
+async function loadDayRates(){
+	try{
+		if (!S.daily.length){ S.dayRates = {}; return; }
+		const a = S.daily[0].date.replace(/-/g, '');
+		const b = S.daily[S.daily.length - 1].date.replace(/-/g, '');
+		const r = await (await fetch(`/api/rates?since=${a}&until=${b}`)).json();
+		S.dayRates = (r.ok && r.rates) || {};
+	}catch(e){ S.dayRates = {}; }
+}
+
+// cambio aplicavel a um dia: fechamento daquele dia, senao a cotacao corrente
+function rateFor(date){ return S.dayRates[date] || S.rate || null; }
+function hasAnyRate(){ return !!(S.rate || Object.keys(S.dayRates).length); }
+
 async function loadUsage(){
 	document.body.classList.add('loading');
 	$('err').style.display = 'none';
@@ -332,6 +367,7 @@ async function loadUsage(){
 		if (S.sel !== null) S.sel = new Set([...S.sel].filter(m => set.has(m)));
 		normalizeSel();
 
+		await loadDayRates();
 		renderFiltered();
 		$('status').innerHTML = 'atualizado às <b>' + new Date().toLocaleTimeString('pt-BR') + '</b>';
 	}catch(e){
@@ -343,7 +379,11 @@ async function loadUsage(){
 }
 
 // ---------- render ----------
-function renderFiltered(){ renderFilterBar(); renderTags(); renderCards(); renderChips(); renderChart(); renderTable(); }
+function renderFiltered(){
+	renderFilterBar(); renderTags(); renderCards(); renderChips();
+	if (S.screen === 'analysis'){ renderAnalysis(); return; }
+	renderChart(); renderTable();
+}
 
 function renderTags(){
 	const tags = [...new Set(Object.values(S.modelTag))].filter(t => t !== '').sort();
@@ -370,11 +410,15 @@ function renderTags(){
 
 function totalsOf(models){
 	const on = new Set(models);
-	const t = {input:0,output:0,cacheW:0,cacheR:0,tokens:0,cost:0};
-	S.daily.forEach(d => d.models.forEach(m => {
-		if (!on.has(m.name)) return;
-		t.input+=m.input; t.output+=m.output; t.cacheW+=m.cacheW; t.cacheR+=m.cacheR; t.tokens+=m.tokens; t.cost+=m.cost;
-	}));
+	const t = {input:0,output:0,cacheW:0,cacheR:0,tokens:0,cost:0,brl:0};
+	S.daily.forEach(d => {
+		const r = rateFor(d.date) || 0; // BRL sempre pelo cambio do proprio dia
+		d.models.forEach(m => {
+			if (!on.has(m.name)) return;
+			t.input+=m.input; t.output+=m.output; t.cacheW+=m.cacheW; t.cacheR+=m.cacheR; t.tokens+=m.tokens; t.cost+=m.cost;
+			t.brl += m.cost * r;
+		});
+	});
 	return t;
 }
 
@@ -395,9 +439,10 @@ function renderCards(){
 	$('cCacheW').textContent = compact(t.cacheW);
 	$('cCacheR').textContent = compact(t.cacheR);
 	$('cTotal').textContent  = compact(t.tokens);
-	if (S.rate){
-		$('cBrl').textContent = nfBrl.format(t.cost * S.rate);
-		$('cBrlSub').textContent = nfUsd.format(t.cost) + '  ·  US$ 1 = ' + nfBrl.format(S.rate) + '  ·  ' + (S.rateSource||'');
+	if (hasAnyRate()){
+		$('cBrl').textContent = nfBrl.format(t.brl);
+		$('cBrlSub').textContent = nfUsd.format(t.cost) + '  ·  câmbio de fechamento por dia' +
+			(S.rate ? '  ·  hoje US$ 1 = ' + nfBrl.format(S.rate) : '') + '  ·  ' + (S.rateSource || 'AwesomeAPI');
 	} else {
 		$('cBrl').textContent = nfUsd.format(t.cost);
 		$('cBrlSub').textContent = 'cotação USD→BRL indisponível no momento';
@@ -466,14 +511,10 @@ function buildChartData(daily, models, metric, fns){
 				data: models.map(m => { const e = entryOf(oneDay, m); return e ? totalOf(e) : 0; }),
 				backgroundColor: models.map(fns.colorOf) }, wideBar)] };
 	}
-	// barLabel: texto simples desenhado dentro do segmento pelo barLabelPlugin.
-	// E uma propriedade custom do dataset de proposito — funcao dentro de
-	// options.plugins seria auto-invocada pelo resolvedor do Chart.js e quebraria.
-	// So o empilhado por tipo usa; o grafico principal (byDay) fica limpo.
 	const labels = daily.map(fns.dayLabel);
 	if (canSplit(daily.map(d => entryOf(d, only)))){
 		return { mode: 'byDayType', labels,
-			datasets: TOKEN_PARTS.map(p => Object.assign({ label: p.label, barLabel: p.label,
+			datasets: TOKEN_PARTS.map(p => Object.assign({ label: p.label,
 				data: daily.map(d => { const e = entryOf(d, only); return e ? partOf(e, p) : 0; }),
 				backgroundColor: p.color }, bar)) };
 	}
@@ -486,7 +527,7 @@ function buildChartData(daily, models, metric, fns){
 // ---------- carrossel de visões ----------
 const VIEWS = [
 	{ id: 'bars',     label: 'barras · linha do tempo',   title: 'Consumo por dia · por modelo',
-	  hint: 'clique num modelo (barra ou chip) para filtrar tudo · Ctrl/Shift+clique adiciona ou remove da seleção' },
+	  hint: 'clique numa barra filtra o modelo · clique na data (eixo) isola o dia · Ctrl/Shift+clique adiciona ou remove' },
 	{ id: 'pieModel', label: 'pizza · rateio por modelo', title: 'Rateio do período · por modelo',
 	  hint: 'participação de cada modelo no período · clique numa fatia para filtrar' },
 	{ id: 'pieType',  label: 'pizza · por tipo de token', title: 'Rateio do período · por tipo de token',
@@ -586,6 +627,74 @@ const pieCalloutPlugin = {
 	}
 };
 
+// ---------- analise: comparacao de modelos no periodo ----------
+// Pura (testavel): agrega o periodo por modelo e aponta destaques.
+// costPerM = custo do periodo / tokens do periodo * 1 milhao (null sem custo).
+function buildAnalysis(daily, models){
+	const on = new Set(models);
+	const agg = {};
+	daily.forEach(d => (d.models || []).forEach(e => {
+		if (!on.has(e.name)) return;
+		const a = agg[e.name] || (agg[e.name] = { name: e.name, tokens: 0, cost: 0 });
+		a.tokens += e.tokens || 0;
+		a.cost += e.cost || 0;
+	}));
+	const rows = Object.values(agg).filter(a => a.tokens > 0);
+	const totalCost = rows.reduce((s, a) => s + a.cost, 0);
+	rows.forEach(a => {
+		a.cost = +a.cost.toFixed(6);
+		a.costPerM = a.cost > 0 ? +(a.cost / a.tokens * 1e6).toFixed(4) : null;
+		a.sharePct = totalCost > 0 ? +(a.cost / totalCost * 100).toFixed(1) : 0;
+	});
+	rows.sort((x, y) => y.cost - x.cost);
+	const priced = rows.filter(a => a.costPerM !== null);
+	return {
+		rows,
+		totalCost: +totalCost.toFixed(6),
+		totalTokens: rows.reduce((s, a) => s + a.tokens, 0),
+		cheapest: priced.length ? priced.reduce((m, a) => (a.costPerM < m.costPerM ? a : m)) : null,
+		biggestSpender: rows.length ? rows.reduce((m, a) => (a.cost > m.cost ? a : m)) : null,
+		biggestConsumer: rows.length ? rows.reduce((m, a) => (a.tokens > m.tokens ? a : m)) : null
+	};
+}
+
+function renderAnalysis(){
+	const a = buildAnalysis(S.daily, visibleModels());
+	const card = (k, v, s) => `<div class="card"><div class="k">${k}</div><div class="v">${v}</div><div class="s">${s || ''}</div></div>`;
+	const avg = a.totalTokens > 0 && a.totalCost > 0 ? a.totalCost / a.totalTokens * 1e6 : null;
+	$('anCards').innerHTML =
+		card('Menor custo / M tokens', a.cheapest ? esc(shortModel(a.cheapest.name)) : '—',
+			a.cheapest ? nfUsd.format(a.cheapest.costPerM) + ' por milhão' : 'sem modelos com custo') +
+		card('Maior gastador', a.biggestSpender ? esc(shortModel(a.biggestSpender.name)) : '—',
+			a.biggestSpender ? nfUsd.format(a.biggestSpender.cost) + '  ·  ' + a.biggestSpender.sharePct.toLocaleString('pt-BR') + '% do período' : '') +
+		card('Maior consumo de tokens', a.biggestConsumer ? esc(shortModel(a.biggestConsumer.name)) : '—',
+			a.biggestConsumer ? compact(a.biggestConsumer.tokens) + ' tokens' : '') +
+		card('Custo médio do período', avg !== null ? nfUsd.format(avg) : '—', 'US$ por milhão de tokens (geral)');
+	const tb = $('anTbl').querySelector('tbody');
+	tb.innerHTML = '';
+	a.rows.forEach((r, i) => {
+		const tr = document.createElement('tr');
+		tr.innerHTML = `<td>${i + 1}</td>
+			<td><span class="dot" style="display:inline-block;width:8px;height:8px;border-radius:2px;margin-right:7px;background:${colorOf(r.name)}"></span>${esc(shortModel(r.name))}</td>
+			<td>${esc(S.modelTag[r.name] || '—')}</td>
+			<td>${nf.format(r.tokens)}</td>
+			<td>${nfUsd.format(r.cost)}</td>
+			<td>${r.costPerM !== null ? nfUsd.format(r.costPerM) : '—'}</td>
+			<td>${r.sharePct.toLocaleString('pt-BR')}%</td>`;
+		tb.appendChild(tr);
+	});
+}
+
+function setScreen(s){
+	S.screen = s;
+	$('tabMain').classList.toggle('on', s === 'main');
+	$('tabAnalysis').classList.toggle('on', s === 'analysis');
+	$('analysisSection').style.display = s === 'analysis' ? '' : 'none';
+	$('chartSection').style.display = s === 'analysis' ? 'none' : '';
+	$('tableSection').style.display = s === 'analysis' ? 'none' : '';
+	renderFiltered();
+}
+
 function pieConfig(labels, data, colors, fmtLabel, extra){
 	return {
 		type: 'pie',
@@ -634,6 +743,7 @@ function renderPieType(){
 function renderChart(){
 	// destroy defensivo: um grafico em estado quebrado nao pode impedir os proximos
 	if (S.chart){ try { S.chart.destroy(); } catch (_) {} S.chart = null; }
+	S.chartMode = null;
 	const v = VIEWS[S.view];
 	$('chViewLabel').textContent = v.label;
 	$('chartTitle').textContent = v.title;
@@ -656,40 +766,20 @@ function fitLabel(text, maxWidth, measure){
 	return measure(t) <= maxWidth ? t : null;
 }
 
-// Plugin inline (zero dependencia extra): escreve o nome do modelo/tipo dentro
-// dos segmentos empilhados com espaco suficiente — da para bater o olho e ver
-// quem e o responsavel pelo maior consumo sem passar o mouse.
-// Le APENAS ds.barLabel (string simples no dataset). Nao usa options.plugins:
-// o resolvedor de opcoes do Chart.js auto-invoca funcoes colocadas la e isso ja
-// quebrou o painel uma vez. O try/catch garante que rotulo nunca derruba o grafico.
-const barLabelPlugin = {
-	id: 'barLabels',
-	afterDatasetsDraw(chart){
-		try {
-			const dss = (chart.data && chart.data.datasets) || [];
-			if (!dss.some(d => d.barLabel)) return;
-			const ctx = chart.ctx;
-			ctx.save();
-			ctx.font = '600 10px "IBM Plex Mono", ui-monospace, monospace';
-			ctx.textAlign = 'center';
-			ctx.textBaseline = 'middle';
-			ctx.fillStyle = 'rgba(10,13,17,.88)'; // texto escuro: legivel sobre toda a paleta
-			dss.forEach((ds, di) => {
-				if (!ds.barLabel) return;
-				const meta = chart.getDatasetMeta(di);
-				if (!meta || meta.hidden) return;
-				(meta.data || []).forEach((el) => {
-					const p = el.getProps(['x', 'y', 'base', 'width'], true);
-					const h = p.base - p.y;
-					if (!(h >= 13)) return; // segmento baixo demais (ou NaN) fica sem texto
-					const t = fitLabel(ds.barLabel, p.width - 8, (s) => ctx.measureText(s).width);
-					if (t) ctx.fillText(t, p.x, p.y + h / 2);
-				});
-			});
-			ctx.restore();
-		} catch (_) { /* desenho de rotulo e cosmetico: nunca pode quebrar o render */ }
-	}
-};
+// Tooltip diario das barras. Pura (testavel): recebe o dia, os modelos ativos,
+// o cambio do dia e os formatadores. Mostra o nome do modelo apenas quando ha
+// um unico ativo; sempre: total de tokens do dia, valor em US$ e em R$.
+function dayTooltipLines(day, models, rate, fmt){
+	const on = new Set(models);
+	let tokens = 0, cost = 0;
+	(day.models || []).forEach(m => { if (on.has(m.name)){ tokens += m.tokens || 0; cost += m.cost || 0; } });
+	const lines = [];
+	if (models.length === 1) lines.push(fmt.shortModel(models[0]));
+	lines.push(fmt.num(tokens) + ' tokens');
+	lines.push(fmt.usd(cost));
+	if (rate) lines.push(fmt.brl(cost * rate));
+	return lines;
+}
 
 function renderBars(){
 	const models = activeModels();
@@ -697,6 +787,7 @@ function renderBars(){
 	const spec = buildChartData(S.daily, models, S.metric, {
 		shortModel, colorOf, dayLabel: (d) => brDate(d.date).slice(0,5)
 	});
+	S.chartMode = spec.mode; // usado pelo listener de clique no eixo (dia)
 	const typeMode = spec.mode === 'byType' || spec.mode === 'byDayType';
 	const entryOf = (d) => d.models.find(x => x.name === only);
 	// tooltip dos modos por tipo: mostra tokens E custo (estimado) do tipo
@@ -708,15 +799,14 @@ function renderBars(){
 
 	S.chart = new Chart($('chart'), {
 		type: 'bar',
-		plugins: [barLabelPlugin],
 		data: { labels: spec.labels, datasets: spec.datasets },
 		options: {
 			responsive: true, maintainAspectRatio: false, animation: { duration: 200 },
 			onClick: (ev, els, chart) => {
-				// nos modos por tipo de token nao ha modelo para filtrar
-				if (typeMode) return;
 				const hits = chart.getElementsAtEventForMode(ev, 'nearest', { intersect: true }, true);
 				if (!hits.length) return;
+				// nos modos por tipo de token nao ha modelo para filtrar
+				if (typeMode) return;
 				const model = spec.mode === 'byModel' ? models[hits[0].index] : chart.data.datasets[hits[0].datasetIndex].label;
 				const additive = ev.native && (ev.native.ctrlKey || ev.native.metaKey || ev.native.shiftKey);
 				// adia para depois do evento: destruir o grafico dentro do proprio
@@ -738,17 +828,26 @@ function renderBars(){
 					callbacks: {
 						title: (items) => {
 							const t = items[0] && items[0].label;
-							if (spec.mode === 'byDayType') return shortModel(only) + '  ·  ' + t;
+							// linha do tempo: titulo e a data completa do dia
+							if (spec.mode === 'byDay' || spec.mode === 'byDayType'){
+								const d = S.daily[items[0] && items[0].dataIndex];
+								return d ? brDate(d.date) : t;
+							}
 							if (spec.mode === 'byType') return shortModel(only) + '  ·  ' + brDate(S.daily[0].date);
 							if (spec.mode === 'byModel') return brDate(S.daily[0].date);
 							return t;
 						},
 						label: (ctx) => {
-							if (spec.mode === 'byDayType') return typeLine(entryOf(S.daily[ctx.dataIndex]), TOKEN_PARTS[ctx.datasetIndex]);
+							// linha do tempo: resumo do DIA (tokens, US$, R$ do fechamento;
+							// nome do modelo so quando um unico esta ativo)
+							if (spec.mode === 'byDay' || spec.mode === 'byDayType'){
+								const d = S.daily[ctx.dataIndex];
+								if (!d) return '';
+								return dayTooltipLines(d, models, rateFor(d.date),
+									{ num: (n) => nf.format(n), usd: (n) => nfUsd.format(n), brl: (n) => nfBrl.format(n), shortModel }).map(l => ' ' + l);
+							}
 							if (spec.mode === 'byType') return typeLine(entryOf(S.daily[0]), TOKEN_PARTS[ctx.dataIndex]);
-							if (spec.mode === 'byModel') return ' ' + shortModel(models[ctx.dataIndex]) + ': ' +
-								(S.metric === 'tokens' ? nf.format(ctx.raw) + ' tokens' : nfUsd.format(ctx.raw));
-							return ' ' + shortModel(ctx.dataset.label) + ': ' +
+							return ' ' + shortModel(models[ctx.dataIndex]) + ': ' +
 								(S.metric === 'tokens' ? nf.format(ctx.raw) + ' tokens' : nfUsd.format(ctx.raw));
 						}
 					}
@@ -781,7 +880,7 @@ function renderTable(){
 			<td>${esc(S.modelTag[r.name] || '—')}</td>
 			<td>${nf.format(r.input)}</td><td>${nf.format(r.output)}</td>
 			<td>${nf.format(r.cacheW)}</td><td>${nf.format(r.cacheR)}</td><td>${nf.format(r.tokens)}</td>
-			<td>${nfUsd.format(r.cost)}</td><td class="brl">${S.rate ? nfBrl.format(r.cost*S.rate) : '—'}</td>`;
+			<td>${nfUsd.format(r.cost)}</td><td class="brl">${rateFor(r.date) ? nfBrl.format(r.cost*rateFor(r.date)) : '—'}</td>`;
 		tb.appendChild(tr);
 	});
 	tb.querySelectorAll('td.model').forEach(td => {
@@ -791,7 +890,7 @@ function renderTable(){
 	tf.innerHTML = `<tr><td>Total</td><td>${S.sel === null ? 'todos' : S.sel.size + ' modelo(s)'}</td><td>${S.tag === null ? 'todas' : esc(tagLabel(S.tag))}</td>
 		<td>${nf.format(t.input)}</td><td>${nf.format(t.output)}</td>
 		<td>${nf.format(t.cacheW)}</td><td>${nf.format(t.cacheR)}</td><td>${nf.format(t.tokens)}</td>
-		<td>${nfUsd.format(t.cost)}</td><td class="brl">${S.rate ? nfBrl.format(t.cost*S.rate) : '—'}</td></tr>`;
+		<td>${nfUsd.format(t.cost)}</td><td class="brl">${hasAnyRate() ? nfBrl.format(t.brl) : '—'}</td></tr>`;
 }
 
 // ---------- CSV ----------
@@ -800,10 +899,10 @@ function exportCsv(){
 	const rows = [['Data','Modelo','Tag','Entrada','Saida','Cache write','Cache read','Total tokens','Custo USD','Custo BRL']];
 	tableRows().forEach(r => rows.push([
 		brDate(r.date), r.name, S.modelTag[r.name] || '', r.input, r.output, r.cacheW, r.cacheR, r.tokens,
-		fmt(r.cost, 6), S.rate ? fmt(r.cost*S.rate, 4) : ''
+		fmt(r.cost, 6), rateFor(r.date) ? fmt(r.cost*rateFor(r.date), 4) : ''
 	]));
 	const t = totalsOf(activeModels());
-	rows.push(['Total','','', t.input, t.output, t.cacheW, t.cacheR, t.tokens, fmt(t.cost,4), S.rate ? fmt(t.cost*S.rate,2) : '']);
+	rows.push(['Total','','', t.input, t.output, t.cacheW, t.cacheR, t.tokens, fmt(t.cost,4), hasAnyRate() ? fmt(t.brl,2) : '']);
 	const csv = '\uFEFF' + rows.map(r => r.join(';')).join('\r\n');
 	const a = document.createElement('a');
 	a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv;charset=utf-8' }));
@@ -997,6 +1096,19 @@ $('mTokens').onclick = () => { S.metric='tokens'; $('mTokens').classList.add('on
 $('mCost').onclick   = () => { S.metric='cost';   $('mCost').classList.add('on');   $('mTokens').classList.remove('on'); renderChart(); };
 $('chPrev').onclick = () => setView(S.view - 1);
 $('chNext').onclick = () => setView(S.view + 1);
+$('tabMain').onclick = () => setScreen('main');
+$('tabAnalysis').onclick = () => setScreen('analysis');
+// clique na area dos rotulos do eixo X (abaixo das barras) isola aquele dia.
+// Listener proprio no canvas: o Chart.js nao entrega onClick fora da chartArea.
+$('chart').addEventListener('click', (e) => {
+	if (!S.chart || (S.chartMode !== 'byDay' && S.chartMode !== 'byDayType')) return;
+	const rect = $('chart').getBoundingClientRect();
+	const x = e.clientX - rect.left, y = e.clientY - rect.top;
+	if (y <= S.chart.chartArea.bottom) return; // dentro do grafico: filtro por modelo (Chart.js)
+	const idx = Math.round(S.chart.scales.x.getValueForPixel(x));
+	const d = S.daily[idx];
+	if (d){ setRange(d.date, d.date); refresh(); }
+});
 document.addEventListener('keydown', (e) => {
 	if (e.key !== 'Escape') return;
 	if ($('syncModal').style.display !== 'none'){ $('syncModal').style.display = 'none'; return; }

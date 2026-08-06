@@ -388,6 +388,76 @@ async function getRate() {
 	}
 }
 
+// ---------------- cambio historico (fechamento por dia) ----------------
+// Dias passados nao podem flutuar: cada dia usa o fechamento do dolar daquele
+// dia (AwesomeAPI /json/daily). Fechamentos sao imutaveis -> cache persistente.
+// Fim de semana/feriado nao tem pregao: herda o fechamento anterior (fillRateGaps).
+const RATES_CACHE_FILE = path.join(CONFIG_DIR, 'rates-cache.json');
+let ratesStore = { rates: {}, coveredFrom: null, coveredUntil: null };
+try { ratesStore = Object.assign(ratesStore, readJson(RATES_CACHE_FILE)); } catch (_) {}
+
+function saveRatesStore() {
+	try { fs.writeFileSync(RATES_CACHE_FILE, JSON.stringify(ratesStore)); } catch (_) {}
+}
+
+// Pura (testavel): completa datas sem pregao com o fechamento anterior mais proximo.
+function fillRateGaps(dates, rates) {
+	const known = Object.keys(rates).sort();
+	const out = {};
+	for (const d of [...dates].sort()) {
+		if (rates[d] != null) { out[d] = rates[d]; continue; }
+		let best = null;
+		for (const k of known) { if (k <= d) best = k; else break; }
+		if (best) out[d] = rates[best];
+	}
+	return out;
+}
+
+function isoRange(sinceIso, untilIso, cap) {
+	const out = [];
+	const d = new Date(sinceIso + 'T00:00:00Z');
+	const end = new Date(untilIso + 'T00:00:00Z');
+	while (d <= end && out.length < (cap || 400)) {
+		out.push(d.toISOString().slice(0, 10));
+		d.setUTCDate(d.getUTCDate() + 1);
+	}
+	return out;
+}
+
+async function getDayRates(sinceIso, untilIso) {
+	// so fechamentos: hoje ainda flutua e fica de fora (o front usa a cotacao corrente)
+	const yesterday = new Date(Date.now() - 24 * 3600 * 1000).toISOString().slice(0, 10);
+	const hi = untilIso < yesterday ? untilIso : yesterday;
+	if (!sinceIso || sinceIso > hi) return {};
+	const dates = isoRange(sinceIso, hi);
+	const uncovered = dates.filter((d) => !ratesStore.coveredFrom || d < ratesStore.coveredFrom || d > ratesStore.coveredUntil);
+	if (uncovered.length) {
+		const s = uncovered[0].replace(/-/g, '');
+		const e = uncovered[uncovered.length - 1].replace(/-/g, '');
+		const qtd = Math.min(1000, uncovered.length + 2);
+		try {
+			const url = 'https://economia.awesomeapi.com.br/json/daily/USD-BRL/' + qtd + '?start_date=' + s + '&end_date=' + e;
+			const res = await withTimeout(fetch(url, { signal: AbortSignal.timeout(8000) }), 9000);
+			const list = await withTimeout(res.json(), 5000);
+			if (Array.isArray(list)) {
+				for (const it of list) {
+					const bid = parseFloat(it && it.bid);
+					const ts = parseInt(it && it.timestamp, 10);
+					if (Number.isFinite(bid) && bid > 0 && Number.isFinite(ts)) {
+						ratesStore.rates[new Date(ts * 1000).toISOString().slice(0, 10)] = bid;
+					}
+				}
+				ratesStore.coveredFrom = (!ratesStore.coveredFrom || uncovered[0] < ratesStore.coveredFrom) ? uncovered[0] : ratesStore.coveredFrom;
+				ratesStore.coveredUntil = (!ratesStore.coveredUntil || uncovered[uncovered.length - 1] > ratesStore.coveredUntil) ? uncovered[uncovered.length - 1] : ratesStore.coveredUntil;
+				saveRatesStore();
+			}
+		} catch (e) {
+			console.warn('[dashboard] cambio historico indisponivel:', e.message);
+		}
+	}
+	return fillRateGaps(dates, ratesStore.rates);
+}
+
 // ---------------- HTTP ----------------
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript', '.css': 'text/css', '.json': 'application/json', '.svg': 'image/svg+xml', '.png': 'image/png', '.ico': 'image/x-icon' };
 
@@ -508,6 +578,15 @@ function createServer() {
 				const r = await getRate();
 				return sendJson(res, 200, { ok: true, rate: r.rate, source: r.source, fetchedAt: r.at || null });
 			}
+			if (url.pathname === '/api/rates') {
+				const dg = (s) => (s || '').replace(/\D/g, '');
+				const toIso = (s) => (s.length === 8 ? s.slice(0, 4) + '-' + s.slice(4, 6) + '-' + s.slice(6, 8) : '');
+				const since = toIso(dg(url.searchParams.get('since')));
+				const until = toIso(dg(url.searchParams.get('until')));
+				if (!since || !until) return sendJson(res, 400, { ok: false, error: 'since/until (yyyymmdd) obrigatorios' });
+				const rates = await getDayRates(since, until);
+				return sendJson(res, 200, { ok: true, rates });
+			}
 			let file = url.pathname === '/' ? '/index.html' : url.pathname;
 			file = path.normalize(file).replace(/^([.][.][/\\])+/, '');
 			const pubDir = path.join(ROOT, 'public');
@@ -586,7 +665,7 @@ function startServer() {
 }
 
 // funcoes puras exportadas tambem para os testes (test/unit.test.js)
-module.exports = { startServer, CONFIG, parseModelName, sliceRange, costBreakdownOf, validateSyncConfig };
+module.exports = { startServer, CONFIG, parseModelName, sliceRange, costBreakdownOf, validateSyncConfig, fillRateGaps };
 
 if (require.main === module) {
 	startServer().catch((e) => {

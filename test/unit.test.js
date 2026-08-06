@@ -8,7 +8,7 @@ const assert = require('node:assert/strict');
 const fs = require('fs');
 const path = require('path');
 
-const { parseModelName, sliceRange, costBreakdownOf, validateSyncConfig } = require('../server.js');
+const { parseModelName, sliceRange, costBreakdownOf, validateSyncConfig, fillRateGaps } = require('../server.js');
 const { mergeHistory } = require('../sync.js');
 
 // ---------------- parseModelName ----------------
@@ -202,17 +202,97 @@ test('buildChartData: varios dias e um modelo -> tipos de token por dia (byDayTy
 	assert.equal(r.mode, 'byDayType');
 	assert.equal(r.datasets.length, 4);
 	assert.deepEqual(r.datasets.map((d) => d.data[0]), [100, 50, 10, 40]);
-	assert.deepEqual(r.datasets.map((d) => d.barLabel), ['entrada', 'saída', 'cache write', 'cache read']);
+	// nenhuma barra leva texto dentro: nomes so nas pizzas, via chamadas externas
+	assert.equal(r.datasets[0].barLabel, undefined);
 });
 
-test('buildChartData: modos de um dia nao poem barLabel (eixo X ja nomeia) e usam barra larga', () => {
+test('buildChartData: modos de um dia usam barra larga', () => {
 	const daily = [{ date: '2026-07-01', models: [mkModel('a-x'), mkModel('b-y')] }];
 	const byModel = buildChartData(daily, ['a-x', 'b-y'], 'tokens', fns);
-	assert.equal(byModel.datasets[0].barLabel, undefined);
 	assert.ok(byModel.datasets[0].maxBarThickness > 34, 'barra de dia unico deveria ser mais larga');
 	const byType = buildChartData(daily, ['a-x'], 'tokens', fns);
-	assert.equal(byType.datasets[0].barLabel, undefined);
 	assert.ok(byType.datasets[0].maxBarThickness > 34);
+});
+
+// ---------------- tooltip diario das barras ----------------
+const dayTooltipLines = new Function(
+	grabBlock(/^function dayTooltipLines[\s\S]*?^\}/m, 'dayTooltipLines') + '\nreturn dayTooltipLines;'
+)();
+const tfmt = {
+	num: (n) => 'N' + n, usd: (n) => 'U' + n.toFixed(2), brl: (n) => 'R' + n.toFixed(2),
+	shortModel: (m) => m.replace(/^claude-/, '')
+};
+
+test('dayTooltipLines: um modelo ativo mostra nome + tokens + US$ + R$', () => {
+	const day = { date: '2026-07-01', models: [mkModel('claude-a', { tokens: 100, cost: 2 }), mkModel('b', { tokens: 999, cost: 9 })] };
+	const lines = dayTooltipLines(day, ['claude-a'], 5, tfmt);
+	assert.deepEqual(lines, ['a', 'N100 tokens', 'U2.00', 'R10.00']);
+});
+
+test('dayTooltipLines: varios modelos ativos omitem o nome e somam o dia', () => {
+	const day = { date: '2026-07-01', models: [mkModel('a', { tokens: 100, cost: 2 }), mkModel('b', { tokens: 50, cost: 1 })] };
+	const lines = dayTooltipLines(day, ['a', 'b'], 2, tfmt);
+	assert.deepEqual(lines, ['N150 tokens', 'U3.00', 'R6.00']);
+});
+
+test('dayTooltipLines: sem cambio omite a linha em reais', () => {
+	const day = { date: '2026-07-01', models: [mkModel('a', { tokens: 10, cost: 1 })] };
+	const lines = dayTooltipLines(day, ['a'], null, tfmt);
+	assert.deepEqual(lines, ['a', 'N10 tokens', 'U1.00']);
+});
+
+// ---------------- buildAnalysis (tela de analise) ----------------
+const buildAnalysis = new Function(
+	grabBlock(/^function buildAnalysis[\s\S]*?^\}/m, 'buildAnalysis') + '\nreturn buildAnalysis;'
+)();
+
+test('buildAnalysis: agrega o periodo por modelo com custo por milhao e participacao', () => {
+	const daily = [
+		{ date: '2026-07-01', models: [mkModel('caro', { tokens: 1000000, cost: 10 }), mkModel('barato', { tokens: 4000000, cost: 1 })] },
+		{ date: '2026-07-02', models: [mkModel('caro', { tokens: 1000000, cost: 10 })] }
+	];
+	const a = buildAnalysis(daily, ['caro', 'barato']);
+	assert.equal(a.rows.length, 2);
+	const caro = a.rows.find((r) => r.name === 'caro');
+	assert.equal(caro.tokens, 2000000);
+	assert.equal(caro.cost, 20);
+	assert.equal(caro.costPerM, 10);      // 20 USD / 2M tokens
+	assert.equal(caro.sharePct, 95.2);    // 20 de 21
+	assert.equal(a.cheapest.name, 'barato');       // 0.5 USD/M
+	assert.equal(a.biggestSpender.name, 'caro');
+	assert.equal(a.biggestConsumer.name, 'barato');
+});
+
+test('buildAnalysis: modelo sem custo nao concorre a mais barato mas aparece no ranking', () => {
+	const daily = [{ date: '2026-07-01', models: [mkModel('gratis', { tokens: 500, cost: 0 }), mkModel('pago', { tokens: 100, cost: 1 })] }];
+	const a = buildAnalysis(daily, ['gratis', 'pago']);
+	assert.equal(a.cheapest.name, 'pago');
+	const gratis = a.rows.find((r) => r.name === 'gratis');
+	assert.equal(gratis.costPerM, null);
+});
+
+test('buildAnalysis: respeita a lista de modelos e ordena por custo desc', () => {
+	const daily = [{ date: '2026-07-01', models: [mkModel('a', { cost: 1 }), mkModel('b', { cost: 5 }), mkModel('fora', { cost: 99 })] }];
+	const a = buildAnalysis(daily, ['a', 'b']);
+	assert.deepEqual(a.rows.map((r) => r.name), ['b', 'a']);
+});
+
+test('buildAnalysis: vazio nao quebra', () => {
+	const a = buildAnalysis([], []);
+	assert.deepEqual(a.rows, []);
+	assert.equal(a.cheapest, null);
+});
+
+// ---------------- fillRateGaps (cambio de fechamento) ----------------
+test('fillRateGaps: fim de semana herda o fechamento anterior', () => {
+	const out = fillRateGaps(['2026-07-03', '2026-07-04', '2026-07-05', '2026-07-06'],
+		{ '2026-07-03': 5.1, '2026-07-06': 5.3 });
+	assert.deepEqual(out, { '2026-07-03': 5.1, '2026-07-04': 5.1, '2026-07-05': 5.1, '2026-07-06': 5.3 });
+});
+
+test('fillRateGaps: data anterior ao primeiro fechamento conhecido fica sem valor', () => {
+	const out = fillRateGaps(['2026-07-01', '2026-07-02'], { '2026-07-02': 5.2 });
+	assert.deepEqual(out, { '2026-07-02': 5.2 });
 });
 
 test('buildChartData: um dia e varios modelos -> eixo X por modelo (byModel)', () => {

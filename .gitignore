@@ -11,6 +11,7 @@ config.local.json
 sync-state.json
 usage-history.json
 usage-cache.json
+rates-cache.json
 litellm-prices.json
 server.pid
 *.pid

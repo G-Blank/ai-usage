@@ -30,7 +30,9 @@ O navegador abre sozinho em http://localhost:8384. Se rodar o start de novo com 
 ## O que tem no painel
 
 - **Filtro de período** — padrão: início ao fim do mês atual
-- **Cards**: entrada, saída, cache write, cache read, total de tokens e custo do período em R$ (cotação USD→BRL da AwesomeAPI, gratuita, sem chave; sem internet, mostra em US$)
+- **Cards**: entrada, saída, cache write, cache read, total de tokens e custo do período em R$ — cada dia convertido pelo **fechamento do dólar daquele dia** (AwesomeAPI, gratuita, sem chave; fins de semana herdam o fechamento anterior, o dia atual usa a cotação corrente; sem internet, mostra em US$)
+- **Aba Análise**: compara os modelos no período — menor custo por milhão de tokens, maior gastador, maior consumidor e ranking completo (respeita tag e período)
+- **Atalhos de período**: Hoje, Essa semana, Últimos 7 dias, Mês atual e MAX (histórico todo); clicar na **data no eixo do gráfico** isola aquele dia
 - **Gráfico** de colunas empilhadas por dia, dividido por modelo, alternando entre Tokens e Custo (US$)
 - **Filtro cruzado (estilo Power BI)**: clique num modelo — no segmento da barra, no chip ou na linha da tabela — e **tudo** se adapta: cards, gráfico e tabela passam a refletir só aquele modelo. `Ctrl+clique` soma modelos à seleção, clicar de novo (ou `Esc`, ou "Limpar filtro") volta ao total
 - **Tabela granulada por dia × modelo**, com total no rodapé e exportação em CSV (`;` + vírgula decimal, pronto pro Excel BR); o CSV respeita o filtro ativo
